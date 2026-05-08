@@ -370,6 +370,7 @@ private val MENU_ITEMS = listOf(
     MenuItem("Stok", Icons.Default.Inventory2, Routes.STOCK, CatGreen),
     MenuItem("Pengguna", Icons.Default.Group, Routes.USERS, CatGray),
     MenuItem("Token PLN", Icons.Default.Bolt, Routes.PLN_TOKEN, CatOrange),
+    MenuItem("Template PLN", Icons.Default.Bolt, Routes.PLN_TEMPLATES, CatPurple),
     MenuItem("Cetak", Icons.Default.Print, Routes.PRINT_SETTINGS, CatRed),
     MenuItem("Backup", Icons.Default.Backup, Routes.BACKUP, CatCyan),
     MenuItem("Printer", Icons.Default.Print, Routes.PRINTER_DEVICES, CatBlue)

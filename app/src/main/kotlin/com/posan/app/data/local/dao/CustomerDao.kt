@@ -17,6 +17,14 @@ interface CustomerDao {
     @Query("SELECT * FROM customers WHERE name LIKE '%' || :query || '%' OR phone LIKE '%' || :query || '%' ORDER BY name ASC")
     fun search(query: String): Flow<List<CustomerEntity>>
 
+    @Query(
+        "SELECT * FROM customers WHERE " +
+            "(plnIdPelanggan IS NOT NULL AND TRIM(plnIdPelanggan) != '') OR " +
+            "(plnMeterNo IS NOT NULL AND TRIM(plnMeterNo) != '') " +
+            "ORDER BY name ASC"
+    )
+    fun observeWithPln(): Flow<List<CustomerEntity>>
+
     @Query("SELECT * FROM customers WHERE id = :id")
     suspend fun findById(id: Long): CustomerEntity?
 

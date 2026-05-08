@@ -5,6 +5,7 @@ import androidx.room.Room
 import com.posan.app.data.local.AppDatabase
 import com.posan.app.data.local.dao.CategoryDao
 import com.posan.app.data.local.dao.CustomerDao
+import com.posan.app.data.local.dao.PlnTokenTemplateDao
 import com.posan.app.data.local.dao.PrintSettingsDao
 import com.posan.app.data.local.dao.ProductDao
 import com.posan.app.data.local.dao.StockMovementDao
@@ -25,7 +26,7 @@ object DatabaseModule {
     @Singleton
     fun provideDatabase(@ApplicationContext context: Context): AppDatabase =
         Room.databaseBuilder(context, AppDatabase::class.java, AppDatabase.DB_NAME)
-            .addMigrations(AppDatabase.MIGRATION_1_2)
+            .addMigrations(AppDatabase.MIGRATION_1_2, AppDatabase.MIGRATION_2_3)
             .fallbackToDestructiveMigration()
             .build()
 
@@ -49,4 +50,7 @@ object DatabaseModule {
 
     @Provides
     fun providePrintSettingsDao(db: AppDatabase): PrintSettingsDao = db.printSettingsDao()
+
+    @Provides
+    fun providePlnTokenTemplateDao(db: AppDatabase): PlnTokenTemplateDao = db.plnTokenTemplateDao()
 }

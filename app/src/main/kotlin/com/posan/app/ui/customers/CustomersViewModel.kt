@@ -24,6 +24,11 @@ data class CustomersUiState(
     val email: String = "",
     val address: String = "",
     val note: String = "",
+    val plnIdPelanggan: String = "",
+    val plnMeterNo: String = "",
+    val plnTarif: String = "",
+    val plnDaya: String = "",
+    val plnNamaLengkap: String = "",
     val error: String? = null
 )
 
@@ -52,6 +57,11 @@ class CustomersViewModel @Inject constructor(
                 email = entity?.email.orEmpty(),
                 address = entity?.address.orEmpty(),
                 note = entity?.note.orEmpty(),
+                plnIdPelanggan = entity?.plnIdPelanggan.orEmpty(),
+                plnMeterNo = entity?.plnMeterNo.orEmpty(),
+                plnTarif = entity?.plnTarif.orEmpty(),
+                plnDaya = entity?.plnDaya.orEmpty(),
+                plnNamaLengkap = entity?.plnNamaLengkap.orEmpty(),
                 error = null
             )
         }
@@ -63,6 +73,11 @@ class CustomersViewModel @Inject constructor(
     fun setEmail(v: String) = _state.update { it.copy(email = v) }
     fun setAddress(v: String) = _state.update { it.copy(address = v) }
     fun setNote(v: String) = _state.update { it.copy(note = v) }
+    fun setPlnIdPelanggan(v: String) = _state.update { it.copy(plnIdPelanggan = v) }
+    fun setPlnMeterNo(v: String) = _state.update { it.copy(plnMeterNo = v) }
+    fun setPlnTarif(v: String) = _state.update { it.copy(plnTarif = v) }
+    fun setPlnDaya(v: String) = _state.update { it.copy(plnDaya = v) }
+    fun setPlnNamaLengkap(v: String) = _state.update { it.copy(plnNamaLengkap = v) }
 
     fun save() {
         val s = _state.value
@@ -77,12 +92,24 @@ class CustomersViewModel @Inject constructor(
                     phone = s.phone.trim().ifBlank { null },
                     email = s.email.trim().ifBlank { null },
                     address = s.address.trim().ifBlank { null },
-                    note = s.note.trim().ifBlank { null }
+                    note = s.note.trim().ifBlank { null },
+                    plnIdPelanggan = s.plnIdPelanggan.trim().ifBlank { null },
+                    plnMeterNo = s.plnMeterNo.trim().ifBlank { null },
+                    plnTarif = s.plnTarif.trim().uppercase().ifBlank { null },
+                    plnDaya = normalizeDaya(s.plnDaya),
+                    plnNamaLengkap = s.plnNamaLengkap.trim().ifBlank { null }
                 )
                 if (entity.id == 0L) repository.insert(entity) else repository.update(entity)
             }.onSuccess { closeForm() }
                 .onFailure { e -> _state.update { it.copy(error = e.message) } }
         }
+    }
+
+    private fun normalizeDaya(raw: String): String? {
+        val cleaned = raw.trim().uppercase().replace(" ", "")
+        if (cleaned.isBlank()) return null
+        // Allow user to enter "900" and store as "900VA"; keep "VA"/"KVA" if explicitly given.
+        return if (cleaned.endsWith("VA") || cleaned.endsWith("KVA")) cleaned else "${cleaned}VA"
     }
 
     fun delete(entity: CustomerEntity) {

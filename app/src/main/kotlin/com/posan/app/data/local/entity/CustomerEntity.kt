@@ -11,5 +11,13 @@ data class CustomerEntity(
     val email: String? = null,
     val address: String? = null,
     val note: String? = null,
+    val plnIdPelanggan: String? = null,
+    val plnMeterNo: String? = null,
+    val plnTarif: String? = null,
+    val plnDaya: String? = null,
+    val plnNamaLengkap: String? = null,
     val createdAt: Long = System.currentTimeMillis()
-)
+) {
+    val hasPlnData: Boolean
+        get() = !plnIdPelanggan.isNullOrBlank() || !plnMeterNo.isNullOrBlank()
+}

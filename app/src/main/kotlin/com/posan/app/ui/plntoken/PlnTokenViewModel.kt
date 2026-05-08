@@ -1,24 +1,27 @@
 package com.posan.app.ui.plntoken
 
-import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.posan.app.data.local.entity.CustomerEntity
+import com.posan.app.data.local.entity.PlnTokenTemplateEntity
 import com.posan.app.data.local.entity.PrintSettingsEntity
 import com.posan.app.data.prefs.SessionManager
 import com.posan.app.data.repository.AuthRepository
+import com.posan.app.data.repository.CustomerRepository
+import com.posan.app.data.repository.PlnTokenTemplateRepository
 import com.posan.app.data.repository.PrintSettingsRepository
 import com.posan.app.domain.model.PaperWidth
-import com.posan.app.ocr.ParsedPlnReceipt
-import com.posan.app.ocr.PlnReceiptOcr
-import com.posan.app.ocr.PlnReceiptParser
 import com.posan.app.print.BluetoothPrinterService
 import com.posan.app.print.PlnTokenInput
 import com.posan.app.print.ReceiptComposer
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
@@ -34,13 +37,16 @@ data class PlnTokenFormState(
     val tariff: String = "R1",
     val power: String = "900VA",
     val token: String = "",
+    val nominal: Long = 0L,
     val kwh: String = "",
     val rpStroom: String = "",
     val adminFee: String = "2500",
     val materai: String = "0",
     val ppn: String = "0",
     val ppj: String = "0",
-    val totalBayar: String = ""
+    val totalBayar: String = "",
+    val selectedCustomerId: Long? = null,
+    val selectedTemplateId: Long? = null
 ) {
     val totalBayarComputed: Double
         get() {
@@ -63,11 +69,11 @@ private fun autoRef(): String {
 class PlnTokenViewModel @Inject constructor(
     private val printSettingsRepository: PrintSettingsRepository,
     private val authRepository: AuthRepository,
+    private val customerRepository: CustomerRepository,
+    private val templateRepository: PlnTokenTemplateRepository,
     private val composer: ReceiptComposer,
     private val printerService: BluetoothPrinterService,
-    private val sessionManager: SessionManager,
-    private val ocr: PlnReceiptOcr,
-    private val parser: PlnReceiptParser
+    private val sessionManager: SessionManager
 ) : ViewModel() {
 
     private val _form = MutableStateFlow(PlnTokenFormState())
@@ -79,24 +85,24 @@ class PlnTokenViewModel @Inject constructor(
     private val _printing = MutableStateFlow(false)
     val printing: StateFlow<Boolean> = _printing.asStateFlow()
 
-    private val _scanning = MutableStateFlow(false)
-    val scanning: StateFlow<Boolean> = _scanning.asStateFlow()
-
     private val _message = MutableStateFlow<String?>(null)
     val message: StateFlow<String?> = _message.asStateFlow()
 
+    /** Customers that have any PLN-related field filled in. */
+    val plnCustomers: StateFlow<List<CustomerEntity>> = customerRepository.observeAll()
+        .map { list -> list.filter { it.hasPlnData } }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
     init {
-        viewModelScope.launch {
-            _settings.value = printSettingsRepository.get()
-        }
+        viewModelScope.launch { _settings.value = printSettingsRepository.get() }
     }
 
     fun setReferenceNo(v: String) = _form.update { it.copy(referenceNo = v) }
-    fun setMeterNo(v: String) = _form.update { it.copy(meterNo = v) }
-    fun setCustomerId(v: String) = _form.update { it.copy(customerId = v) }
+    fun setMeterNo(v: String) = _form.update { it.copy(meterNo = v, selectedCustomerId = null) }
+    fun setCustomerId(v: String) = _form.update { it.copy(customerId = v, selectedCustomerId = null) }
     fun setCustomerName(v: String) = _form.update { it.copy(customerName = v) }
-    fun setTariff(v: String) = _form.update { it.copy(tariff = v) }
-    fun setPower(v: String) = _form.update { it.copy(power = v) }
+    fun setTariff(v: String) = _form.update { it.copy(tariff = v.uppercase().trim(), selectedTemplateId = null) }
+    fun setPower(v: String) = _form.update { it.copy(power = v.uppercase().replace(" ", ""), selectedTemplateId = null) }
     fun setToken(v: String) = _form.update { it.copy(token = v) }
     fun setKwh(v: String) = _form.update { it.copy(kwh = v) }
     fun setRpStroom(v: String) = _form.update { it.copy(rpStroom = v) }
@@ -112,50 +118,90 @@ class PlnTokenViewModel @Inject constructor(
         _form.value = PlnTokenFormState()
     }
 
-    fun scanFromImage(uri: Uri) {
-        if (_scanning.value) return
-        _scanning.value = true
+    /**
+     * Populate the form with the selected customer's PLN data. If a nominal was already
+     * picked we re-apply the matching template afterwards so the breakdown stays in sync.
+     */
+    fun selectCustomer(customer: CustomerEntity) {
         viewModelScope.launch {
-            try {
-                val raw = ocr.extractText(uri)
-                if (raw.isBlank()) {
-                    _message.value = "Tidak ada teks terbaca dari gambar"
-                    return@launch
-                }
-                val parsed = parser.parse(raw)
-                if (parsed.isEmpty()) {
-                    _message.value = "Tidak ada field PLN yang dikenali"
-                    return@launch
-                }
-                applyParsed(parsed)
-                _message.value = "Data berhasil diisi dari gambar. Mohon periksa kembali."
-            } catch (e: Exception) {
-                _message.value = "Gagal membaca gambar: ${e.message ?: "tidak diketahui"}"
-            } finally {
-                _scanning.value = false
+            val fresh = customerRepository.findById(customer.id) ?: customer
+            val displayName = fresh.plnNamaLengkap?.takeIf { it.isNotBlank() } ?: fresh.name
+            _form.update { current ->
+                current.copy(
+                    selectedCustomerId = fresh.id,
+                    customerId = fresh.plnIdPelanggan.orEmpty(),
+                    customerName = displayName,
+                    meterNo = fresh.plnMeterNo.orEmpty(),
+                    tariff = fresh.plnTarif?.takeIf { it.isNotBlank() } ?: current.tariff,
+                    power = fresh.plnDaya?.takeIf { it.isNotBlank() } ?: current.power,
+                    selectedTemplateId = null
+                )
             }
+            applyTemplateForCurrent()
         }
     }
 
-    private fun applyParsed(parsed: ParsedPlnReceipt) {
-        _form.update { current ->
-            current.copy(
-                customerId = parsed.customerId?.takeIf { it.isNotBlank() } ?: current.customerId,
-                customerName = parsed.customerName?.takeIf { it.isNotBlank() } ?: current.customerName,
-                meterNo = parsed.meterNo?.takeIf { it.isNotBlank() } ?: current.meterNo,
-                tariff = parsed.tariff?.takeIf { it.isNotBlank() } ?: current.tariff,
-                power = parsed.power?.takeIf { it.isNotBlank() } ?: current.power,
-                referenceNo = parsed.referenceNo?.takeIf { it.isNotBlank() } ?: current.referenceNo,
-                token = parsed.token?.takeIf { it.isNotBlank() } ?: current.token,
-                kwh = parsed.kwh?.takeIf { it.isNotBlank() } ?: current.kwh,
-                rpStroom = parsed.rpStroom?.takeIf { it.isNotBlank() } ?: current.rpStroom,
-                adminFee = parsed.adminFee?.takeIf { it.isNotBlank() } ?: current.adminFee,
-                materai = parsed.materai?.takeIf { it.isNotBlank() } ?: current.materai,
-                ppn = parsed.ppn?.takeIf { it.isNotBlank() } ?: current.ppn,
-                ppj = parsed.ppj?.takeIf { it.isNotBlank() } ?: current.ppj,
-                totalBayar = parsed.totalBayar?.takeIf { it.isNotBlank() } ?: current.totalBayar
+    fun clearCustomer() {
+        _form.update {
+            it.copy(
+                selectedCustomerId = null,
+                customerId = "",
+                customerName = "",
+                meterNo = ""
             )
         }
+    }
+
+    /**
+     * Pick a nominal denomination (e.g. 20_000, 50_000, 100_000) and immediately fetch
+     * the matching template for the current tariff/power. Hint via [_message] if no
+     * exact match exists.
+     */
+    fun selectNominal(nominal: Long) {
+        _form.update { it.copy(nominal = nominal) }
+        applyTemplateForCurrent()
+    }
+
+    fun clearNominal() {
+        _form.update { it.copy(nominal = 0L, selectedTemplateId = null) }
+    }
+
+    private fun applyTemplateForCurrent() {
+        val current = _form.value
+        if (current.nominal <= 0L) return
+        viewModelScope.launch {
+            val template = templateRepository.findExact(
+                tarif = current.tariff,
+                daya = current.power,
+                nominal = current.nominal.toInt()
+            )
+            if (template == null) {
+                _message.value = "Template ${current.tariff}/${current.power} ${current.nominal / 1000}k belum ada — buat di menu Template Token PLN"
+                return@launch
+            }
+            applyTemplate(template)
+        }
+    }
+
+    private fun applyTemplate(template: PlnTokenTemplateEntity) {
+        _form.update { current ->
+            current.copy(
+                selectedTemplateId = template.id,
+                kwh = trimZero(template.kwh),
+                rpStroom = trimZero(template.rpStroom),
+                adminFee = trimZero(template.adminFee),
+                materai = trimZero(template.materai),
+                ppn = trimZero(template.ppn),
+                ppj = trimZero(template.ppj),
+                totalBayar = ""
+            )
+        }
+    }
+
+    private fun trimZero(v: Double): String {
+        if (v == 0.0) return "0"
+        val asInt = v.toLong()
+        return if (asInt.toDouble() == v) asInt.toString() else v.toString()
     }
 
     private suspend fun buildInput(): PlnTokenInput {

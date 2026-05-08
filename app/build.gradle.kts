@@ -89,8 +89,6 @@ dependencies {
 
     implementation(libs.escpos.thermalprinter)
 
-    implementation(libs.mlkit.text.recognition)
-
     debugImplementation(libs.androidx.compose.ui.tooling)
 
     testImplementation("junit:junit:4.13.2")
