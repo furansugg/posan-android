@@ -1,0 +1,41 @@
+# Gradle
+.gradle/
+build/
+**/build/
+local.properties
+
+# Android Studio / IntelliJ
+.idea/
+*.iml
+captures/
+.externalNativeBuild/
+.cxx/
+
+# Kotlin
+*.kotlin_metadata
+.kotlin/
+
+# Generated files
+bin/
+gen/
+out/
+
+# Native
+*.so
+*.o
+
+# Logs
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Keys & signing
+*.jks
+*.keystore
+keystore.properties
+
+# Environment
+.env
+.envrc
