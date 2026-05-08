@@ -31,18 +31,9 @@ data class ParsedPlnReceipt(
 
 /**
  * Line-based, label-aware parser for PLN token receipt screenshots.
- *
- * Strategy:
- *  - Split OCR output into trimmed lines.
- *  - For each field, scan lines top-down until any of its label aliases match.
- *  - Extract the value either on the same line (after the label) or, if blank,
- *    from the next non-empty line (handles screenshots where label and value
- *    are on separate visual rows like ShopeePay's invoice template).
- *  - Amounts are normalised to whole-rupiah strings using Indonesian
- *    convention: `.` is thousands separator, `,` is decimal — so
- *    "Rp 1.396,00" becomes "1396" (we drop sub-rupiah cents).
- *  - Token detection looks for a 20-digit sequence (with optional dashes /
- *    spaces) and prefers candidates appearing near a STROOM/TOKEN label.
+ * Each lookup iterates label hits across all lines and skips a hit when the
+ * resolved value fails an optional `valid` predicate, so a noisy/early match
+ * (e.g. "Nama Mitra: ...") doesn't prevent the correct one further down.
  */
 @Singleton
 class PlnReceiptParser @Inject constructor() {
@@ -50,40 +41,41 @@ class PlnReceiptParser @Inject constructor() {
     fun parse(rawText: String): ParsedPlnReceipt {
         val text = rawText.replace('\u00A0', ' ')
         val lines = text.split('\n').map { it.trim() }
+            .filter { line -> line.isNotBlank() && !line.matches(Regex("^[\\s\\-=._:•·]+$")) }
         val joined = lines.joinToString(" ").replace(Regex("\\s+"), " ")
 
-        val tariffDaya = findText(lines, listOf(
+        val tariffDayaText = findText(lines, listOf(
             "TARIF\\s*[/\\\\]?\\s*DAYA",
             "GOLONGAN\\s*TARIF",
             "GOL\\.?\\s*TARIF",
             "TARIF",
             "DAYA"
-        ))
+        ), valid = ::looksLikeTariffDaya)
 
         return ParsedPlnReceipt(
-            customerId = findDigits(lines, listOf(
+            customerId = findId(lines, listOf(
                 "ID\\s*PEL(?:ANGGAN)?",
                 "IDPEL",
                 "NOMOR\\s*PEL(?:ANGGAN)?",
                 "NO\\.?\\s*PEL(?:ANGGAN)?",
                 "ID\\s*PLN",
                 "ID\\s*CUSTOMER"
-            ), minLen = 8, maxLen = 14),
+            ), 8, 14),
             customerName = findText(lines, listOf(
                 "NAMA\\s*PELANGGAN",
                 "NAMA\\s*PEL(?:ANGGAN)?",
                 "NAMA",
                 "CUSTOMER\\s*NAME"
-            ))?.let { sanitizeName(it) },
-            meterNo = findDigits(lines, listOf(
+            ), valid = ::looksLikeName)?.let { sanitizeName(it) },
+            meterNo = findId(lines, listOf(
                 "NOMOR\\s*METER",
                 "NO\\.?\\s*METER",
                 "METER\\s*NO\\.?",
                 "NOMETER",
                 "METER\\s*NUMBER"
-            ), minLen = 8, maxLen = 14),
-            tariff = tariffDaya?.let { extractTariff(it) },
-            power = tariffDaya?.let { extractPower(it) }
+            ), 8, 14),
+            tariff = tariffDayaText?.let { extractTariff(it) },
+            power = tariffDayaText?.let { extractPower(it) }
                 ?: findPowerInline(joined),
             referenceNo = findText(lines, listOf(
                 "NO\\.?\\s*REF(?:ERENSI)?",
@@ -91,17 +83,10 @@ class PlnReceiptParser @Inject constructor() {
                 "REFF",
                 "ID\\s*TRANSAKSI",
                 "NO\\.?\\s*TRANSAKSI"
-            ))?.let { sanitizeRef(it, lines) },
+            ), valid = ::looksLikeRef)?.let { sanitizeRef(it, lines) },
             token = extractToken(joined),
             kwh = findKwh(lines),
-            rpStroom = findAmount(lines, listOf(
-                "RP\\s*STROOM\\s*[/\\\\]?\\s*TOKEN",
-                "RP\\s*STROOM",
-                "STROOM\\s*[/\\\\]?\\s*TOKEN",
-                "NILAI\\s*TOKEN",
-                "TOKEN\\s*LISTRIK",
-                "RP\\s*TOKEN"
-            )),
+            rpStroom = findRpStroom(lines),
             adminFee = findAmount(lines, listOf(
                 "BIAYA\\s*ADM(?:IN)?",
                 "ADM(?:IN)?\\s*BANK",
@@ -132,88 +117,94 @@ class PlnReceiptParser @Inject constructor() {
         )
     }
 
-    private fun findLabelMatch(lines: List<String>, labels: List<String>): Pair<Int, MatchResult>? {
-        for ((i, line) in lines.withIndex()) {
-            for (label in labels) {
-                val r = Regex("(?i)(?<![A-Za-z])$label(?![A-Za-z])")
-                val m = r.find(line) ?: continue
-                return i to m
+    private data class LabelHit(val lineIdx: Int, val match: MatchResult)
+
+    private fun findLabelHits(lines: List<String>, labels: List<String>): Sequence<LabelHit> = sequence {
+        val patterns = labels.map { Regex("(?i)(?<![A-Za-z])$it(?![A-Za-z])") }
+        for (i in lines.indices) {
+            for (p in patterns) {
+                val m = p.find(lines[i]) ?: continue
+                yield(LabelHit(i, m))
+                break
             }
         }
-        return null
     }
 
-    private fun findText(lines: List<String>, labels: List<String>): String? {
-        val match = findLabelMatch(lines, labels) ?: return null
-        val (idx, m) = match
-        val sameLine = lines[idx].substring(m.range.last + 1)
+    private fun extractValue(lines: List<String>, hit: LabelHit): String? {
+        val sameLine = lines[hit.lineIdx].substring(hit.match.range.last + 1)
             .trimStart(' ', '\t', ':', '=', '-')
             .trim()
         if (sameLine.isNotBlank()) return sameLine
-        // Try the next non-blank line (label and value on separate rows).
-        for (j in (idx + 1) until minOf(lines.size, idx + 3)) {
+        for (j in (hit.lineIdx + 1) until minOf(lines.size, hit.lineIdx + 3)) {
             if (lines[j].isNotBlank()) return lines[j]
         }
         return null
     }
 
-    private fun findDigits(
+    private fun findText(
         lines: List<String>,
         labels: List<String>,
-        minLen: Int,
-        maxLen: Int
+        valid: (String) -> Boolean = { true }
     ): String? {
-        val raw = findText(lines, labels) ?: return null
-        // Strip everything except digits, then enforce length window.
-        val digits = raw.filter { it.isDigit() }
-        if (digits.length < minLen) return null
-        return digits.take(maxLen)
+        for (hit in findLabelHits(lines, labels)) {
+            val v = extractValue(lines, hit) ?: continue
+            if (valid(v)) return v
+        }
+        return null
+    }
+
+    private fun findId(lines: List<String>, labels: List<String>, minLen: Int, maxLen: Int): String? {
+        for (hit in findLabelHits(lines, labels)) {
+            val v = extractValue(lines, hit) ?: continue
+            // Reject obvious tokens (long with internal dashes).
+            if (v.contains('-') && v.filter { it.isDigit() }.length > maxLen + 2) continue
+            val digits = v.filter { it.isDigit() }
+            if (digits.length in minLen..(maxLen + 4)) return digits.take(maxLen)
+        }
+        return null
     }
 
     private fun findAmount(lines: List<String>, labels: List<String>): String? {
-        val raw = findText(lines, labels) ?: return null
-        return parseIndonesianAmount(raw)
+        for (hit in findLabelHits(lines, labels)) {
+            val v = extractValue(lines, hit) ?: continue
+            if (!looksLikeAmount(v)) continue
+            parseIndonesianAmount(v)?.let { return it }
+        }
+        return null
     }
 
     /**
      * Indonesian rupiah convention: `.` = thousands separator, `,` = decimal.
-     * "Rp 1.396,00" -> 1396, "Rp46.511" -> 46511, "Rp 0,00" -> 0.
-     * Returns the captured whole-rupiah portion as a digit string, or null
-     * if no numeric content could be found.
+     * "Rp 1.396,00" -> "1396", "Rp46.511" -> "46511".
      */
     private fun parseIndonesianAmount(raw: String): String? {
         val match = Regex("(?:RP\\.?\\s*)?(-?[0-9][0-9.,\\s]{0,18})", RegexOption.IGNORE_CASE).find(raw)
             ?: return null
         var captured = match.groupValues[1].trim()
         if (captured.isBlank()) return null
-        // Drop a trailing decimal section like ",00" or ".50".
         captured = captured.replace(Regex("[.,]\\s*\\d{1,2}\\s*$"), "")
-        // Strip non-digits — leaves only the whole-rupiah portion.
         val digits = captured.filter { it.isDigit() }
         if (digits.isEmpty()) return null
         return digits
     }
 
-    /**
-     * Extract a tariff identifier like "R1", "R1M", "B1", "R2" from a
-     * "Tarif Daya" string. Tolerates "R1/00000900 VA" and "R1M / 900 VA".
-     */
     private fun extractTariff(raw: String): String? {
         val r = Regex("([A-Z]\\s*[0-9]{1,2}[A-Z]?)", RegexOption.IGNORE_CASE).find(raw) ?: return null
         return r.groupValues[1].replace(" ", "").uppercase()
     }
 
-    /**
-     * Extract a power rating like "900VA" or "1300VA". Strips leading zeros
-     * (some apps render "00000900 VA"). Falls back to inserting "VA" when no
-     * unit is on the line.
-     */
     private fun extractPower(raw: String): String? {
-        val r = Regex("([0-9]{2,8})\\s*(VA|KVA|W|KW)?", RegexOption.IGNORE_CASE).find(raw) ?: return null
-        val num = r.groupValues[1].trimStart('0').ifBlank { "0" }
-        if (num == "0") return null
-        val unit = r.groupValues[2].ifBlank { "VA" }.uppercase()
-        return "${num}${unit}"
+        val matches = Regex("([0-9]{1,8})\\s*(VA|KVA|W|KW)?", RegexOption.IGNORE_CASE).findAll(raw).toList()
+        for (m in matches) {
+            val numRaw = m.groupValues[1]
+            val num = numRaw.trimStart('0').ifBlank { "0" }
+            if (num == "0") continue
+            val unit = m.groupValues[2].ifBlank { "VA" }.uppercase()
+            val hasUnit = m.groupValues[2].isNotEmpty()
+            val plausible = num.toIntOrNull()?.let { it in 100..200_000 } == true
+            if (hasUnit || plausible) return "$num$unit"
+        }
+        return null
     }
 
     private fun findPowerInline(joined: String): String? {
@@ -222,19 +213,16 @@ class PlnReceiptParser @Inject constructor() {
     }
 
     /**
-     * Find the 20-digit STROOM/Token. Strategy:
-     *   1. Locate any sequence of 20 digits (possibly grouped with dashes or
-     *      single-character spaces) anywhere in the joined OCR text.
-     *   2. If multiple candidates, prefer the one closest after a
-     *      STROOM/TOKEN label.
-     *   3. Otherwise return the first 20-digit candidate.
+     * Find the 20-digit STROOM/Token. Looks for any digit run (with optional
+     * dashes/spaces) totalling exactly 20 digits, preferring the candidate
+     * appearing within ~80 chars after a STROOM/TOKEN label.
      */
     private fun extractToken(joined: String): String? {
-        val candidates = Regex("[0-9][0-9 \\-]{18,40}").findAll(joined).toList()
-        val twenties = candidates.mapNotNull { m ->
-            val digits = m.value.filter { it.isDigit() }
-            if (digits.length == 20) m to digits else null
-        }
+        val twenties = Regex("[0-9][0-9 \\-]{18,40}").findAll(joined)
+            .mapNotNull { m ->
+                val digits = m.value.filter { it.isDigit() }
+                if (digits.length == 20) m to digits else null
+            }.toList()
         if (twenties.isEmpty()) return null
         val labelEnds = Regex("(?i)(?:STROOM|TOKEN)").findAll(joined).map { it.range.last }.toList()
         if (labelEnds.isNotEmpty()) {
@@ -264,23 +252,91 @@ class PlnReceiptParser @Inject constructor() {
         return null
     }
 
+    /**
+     * Special handling: some receipts (Shopee Mitra) wrap "Rp Stroom/Token"
+     * across two lines — line N is "Rp : Rp 18.604,00", line N+1 is just
+     * "Stroom/Token". Tries 3 patterns in order of specificity.
+     */
+    private fun findRpStroom(lines: List<String>): String? {
+        // A: full label on a single line.
+        val tight = listOf(
+            "RP\\s*STROOM\\s*[/\\\\]?\\s*(?:NOMOR\\s*)?TOKEN",
+            "RP\\s*STROOM",
+            "NILAI\\s*TOKEN",
+            "RP\\s*TOKEN"
+        )
+        findAmount(lines, tight)?.let { return it }
+
+        // B: "Stroom/Token" alone on a line whose previous line starts with "Rp <amount>".
+        val splitToken = Regex("(?i)^\\s*STROOM\\s*[/\\\\]?\\s*(?:NOMOR\\s*)?TOKEN\\s*$")
+        val rpHead = Regex("(?i)^\\s*Rp\\b\\s*[:=]?\\s*(.+)$")
+        for (i in 1 until lines.size) {
+            if (!splitToken.containsMatchIn(lines[i])) continue
+            val pm = rpHead.find(lines[i - 1]) ?: continue
+            val v = pm.groupValues[1].trim()
+            if (looksLikeAmount(v)) parseIndonesianAmount(v)?.let { return it }
+        }
+
+        // C: bare "Stroom/Token" / "Token Listrik" with amount on same or next line.
+        findAmount(lines, listOf(
+            "STROOM\\s*[/\\\\]?\\s*(?:NOMOR\\s*)?TOKEN",
+            "TOKEN\\s*LISTRIK"
+        ))?.let { return it }
+
+        return null
+    }
+
+    private fun looksLikeAmount(v: String): Boolean {
+        val t = v.trim()
+        if (t.isBlank()) return false
+        if (t.contains('-') && !t.startsWith("-")) return false  // tokens have internal dashes
+        if (t.contains('/')) return false
+        if (!t.any { it.isDigit() }) return false
+        if (Regex("(?i)^\\s*Rp\\b").containsMatchIn(t)) return true
+        return t.matches(Regex("[0-9][0-9.,\\s]*"))
+    }
+
+    private fun looksLikeName(v: String): Boolean {
+        val s = v.trim().trimStart(':', ' ').uppercase()
+        if (s.length !in 2..60) return false
+        // Reject "Nama Mitra/Toko/Outlet/Staf/Username/Alamat/..." continuations.
+        val excluded = listOf(
+            "MITRA", "TOKO", "STAF", "USAHA", "OUTLET", "USERNAME", "USER",
+            "ALAMAT", "PEMBELIAN", "PEMBAYARAN", "TANGGAL", "TANGAL", "CABANG"
+        )
+        if (excluded.any { s.startsWith(it) }) return false
+        // Reject if the value is mostly digits (probably a misaligned ID/amount).
+        val letters = s.count { it.isLetter() }
+        val digits = s.count { it.isDigit() }
+        if (digits > letters) return false
+        return true
+    }
+
+    private fun looksLikeRef(v: String): Boolean {
+        val t = v.trim()
+        if (t.length < 4) return false
+        if (Regex("(?i)\\bRp\\b").containsMatchIn(t)) return false
+        return true
+    }
+
+    private fun looksLikeTariffDaya(v: String): Boolean {
+        if (Regex("(?i)\\b[A-Z]\\s*[0-9]{1,2}[A-Z]?\\b").containsMatchIn(v)) return true
+        if (Regex("(?i)\\b[0-9]{2,8}\\s*VA\\b").containsMatchIn(v)) return true
+        return false
+    }
+
     private fun sanitizeName(raw: String): String {
         return raw.split(Regex("\\s{2,}|[|]")).first().trim()
             .takeIf { it.length in 2..60 } ?: raw.take(60)
     }
 
-    /**
-     * Reference numbers are alphanumeric and sometimes wrap to a second line.
-     * We greedily merge the next line if it looks like a continuation
-     * (uppercase alnum-only).
-     */
     private fun sanitizeRef(raw: String, lines: List<String>): String {
         val first = raw.trim()
         val idx = lines.indexOfFirst { it.contains(first) }
         if (idx >= 0 && idx + 1 < lines.size) {
             val next = lines[idx + 1].trim()
-            if (next.isNotEmpty() && next.all { it.isLetterOrDigit() } && next.length in 4..32 &&
-                next.uppercase() == next
+            if (next.isNotEmpty() && next.all { it.isLetterOrDigit() } &&
+                next.length in 4..32 && next.uppercase() == next
             ) {
                 return (first + next).take(40)
             }
