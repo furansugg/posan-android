@@ -1,5 +1,6 @@
 package com.posan.app.ui.plntoken
 
+import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.posan.app.data.local.entity.PrintSettingsEntity
@@ -7,6 +8,9 @@ import com.posan.app.data.prefs.SessionManager
 import com.posan.app.data.repository.AuthRepository
 import com.posan.app.data.repository.PrintSettingsRepository
 import com.posan.app.domain.model.PaperWidth
+import com.posan.app.ocr.ParsedPlnReceipt
+import com.posan.app.ocr.PlnReceiptOcr
+import com.posan.app.ocr.PlnReceiptParser
 import com.posan.app.print.BluetoothPrinterService
 import com.posan.app.print.PlnTokenInput
 import com.posan.app.print.ReceiptComposer
@@ -61,7 +65,9 @@ class PlnTokenViewModel @Inject constructor(
     private val authRepository: AuthRepository,
     private val composer: ReceiptComposer,
     private val printerService: BluetoothPrinterService,
-    private val sessionManager: SessionManager
+    private val sessionManager: SessionManager,
+    private val ocr: PlnReceiptOcr,
+    private val parser: PlnReceiptParser
 ) : ViewModel() {
 
     private val _form = MutableStateFlow(PlnTokenFormState())
@@ -72,6 +78,9 @@ class PlnTokenViewModel @Inject constructor(
 
     private val _printing = MutableStateFlow(false)
     val printing: StateFlow<Boolean> = _printing.asStateFlow()
+
+    private val _scanning = MutableStateFlow(false)
+    val scanning: StateFlow<Boolean> = _scanning.asStateFlow()
 
     private val _message = MutableStateFlow<String?>(null)
     val message: StateFlow<String?> = _message.asStateFlow()
@@ -101,6 +110,52 @@ class PlnTokenViewModel @Inject constructor(
 
     fun resetForm() {
         _form.value = PlnTokenFormState()
+    }
+
+    fun scanFromImage(uri: Uri) {
+        if (_scanning.value) return
+        _scanning.value = true
+        viewModelScope.launch {
+            try {
+                val raw = ocr.extractText(uri)
+                if (raw.isBlank()) {
+                    _message.value = "Tidak ada teks terbaca dari gambar"
+                    return@launch
+                }
+                val parsed = parser.parse(raw)
+                if (parsed.isEmpty()) {
+                    _message.value = "Tidak ada field PLN yang dikenali"
+                    return@launch
+                }
+                applyParsed(parsed)
+                _message.value = "Data berhasil diisi dari gambar. Mohon periksa kembali."
+            } catch (e: Exception) {
+                _message.value = "Gagal membaca gambar: ${e.message ?: "tidak diketahui"}"
+            } finally {
+                _scanning.value = false
+            }
+        }
+    }
+
+    private fun applyParsed(parsed: ParsedPlnReceipt) {
+        _form.update { current ->
+            current.copy(
+                customerId = parsed.customerId?.takeIf { it.isNotBlank() } ?: current.customerId,
+                customerName = parsed.customerName?.takeIf { it.isNotBlank() } ?: current.customerName,
+                meterNo = parsed.meterNo?.takeIf { it.isNotBlank() } ?: current.meterNo,
+                tariff = parsed.tariff?.takeIf { it.isNotBlank() } ?: current.tariff,
+                power = parsed.power?.takeIf { it.isNotBlank() } ?: current.power,
+                referenceNo = parsed.referenceNo?.takeIf { it.isNotBlank() } ?: current.referenceNo,
+                token = parsed.token?.takeIf { it.isNotBlank() } ?: current.token,
+                kwh = parsed.kwh?.takeIf { it.isNotBlank() } ?: current.kwh,
+                rpStroom = parsed.rpStroom?.takeIf { it.isNotBlank() } ?: current.rpStroom,
+                adminFee = parsed.adminFee?.takeIf { it.isNotBlank() } ?: current.adminFee,
+                materai = parsed.materai?.takeIf { it.isNotBlank() } ?: current.materai,
+                ppn = parsed.ppn?.takeIf { it.isNotBlank() } ?: current.ppn,
+                ppj = parsed.ppj?.takeIf { it.isNotBlank() } ?: current.ppj,
+                totalBayar = parsed.totalBayar?.takeIf { it.isNotBlank() } ?: current.totalBayar
+            )
+        }
     }
 
     private suspend fun buildInput(): PlnTokenInput {

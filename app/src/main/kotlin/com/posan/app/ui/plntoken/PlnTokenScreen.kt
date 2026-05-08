@@ -1,5 +1,7 @@
 package com.posan.app.ui.plntoken
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -18,6 +20,8 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Bolt
+import androidx.compose.material.icons.filled.Image
+import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material.icons.filled.Print
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.Button
@@ -33,6 +37,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -43,6 +50,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.FileProvider
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.posan.app.domain.model.PaperWidth
 import com.posan.app.ui.components.FormSection
@@ -51,6 +59,7 @@ import com.posan.app.ui.components.OutlinedSurfaceCard
 import com.posan.app.ui.components.SectionHeader
 import com.posan.app.ui.components.SimpleAppBar
 import com.posan.app.util.Format
+import java.io.File
 
 @Composable
 fun PlnTokenScreen(
@@ -60,14 +69,29 @@ fun PlnTokenScreen(
     val form by viewModel.form.collectAsState()
     val settings by viewModel.settings.collectAsState()
     val printing by viewModel.printing.collectAsState()
+    val scanning by viewModel.scanning.collectAsState()
     val message by viewModel.message.collectAsState()
     val ctx = LocalContext.current
 
     LaunchedEffect(message) {
         message?.let {
-            android.widget.Toast.makeText(ctx, it, android.widget.Toast.LENGTH_SHORT).show()
+            android.widget.Toast.makeText(ctx, it, android.widget.Toast.LENGTH_LONG).show()
             viewModel.consumeMessage()
         }
+    }
+
+    var pendingCameraUri by remember { mutableStateOf<android.net.Uri?>(null) }
+    val pickImage = rememberLauncherForActivityResult(
+        ActivityResultContracts.PickVisualMedia()
+    ) { uri ->
+        if (uri != null) viewModel.scanFromImage(uri)
+    }
+    val takePicture = rememberLauncherForActivityResult(
+        ActivityResultContracts.TakePicture()
+    ) { success ->
+        val uri = pendingCameraUri
+        if (success && uri != null) viewModel.scanFromImage(uri)
+        pendingCameraUri = null
     }
 
     Scaffold(
@@ -86,10 +110,33 @@ fun PlnTokenScreen(
     ) { padding ->
         BoxWithConstraints(modifier = Modifier.fillMaxSize().padding(padding)) {
             val isWide = maxWidth >= 720.dp
+            val onPickGallery: () -> Unit = {
+                pickImage.launch(
+                    androidx.activity.result.PickVisualMediaRequest(
+                        ActivityResultContracts.PickVisualMedia.ImageOnly
+                    )
+                )
+            }
+            val onTakePhoto: () -> Unit = {
+                val photoFile = File(ctx.cacheDir, "pln_scan_${System.currentTimeMillis()}.jpg").apply {
+                    parentFile?.mkdirs()
+                    createNewFile()
+                }
+                val uri = FileProvider.getUriForFile(ctx, "${ctx.packageName}.fileprovider", photoFile)
+                pendingCameraUri = uri
+                takePicture.launch(uri)
+            }
             if (isWide) {
                 Row(modifier = Modifier.fillMaxSize()) {
                     Box(modifier = Modifier.weight(1f).fillMaxSize()) {
-                        TokenForm(viewModel = viewModel, form = form, printing = printing)
+                        TokenForm(
+                            viewModel = viewModel,
+                            form = form,
+                            printing = printing,
+                            scanning = scanning,
+                            onPickGallery = onPickGallery,
+                            onTakePhoto = onTakePhoto
+                        )
                     }
                     Box(modifier = Modifier.weight(1f).fillMaxSize().padding(16.dp)) {
                         ReceiptPreview(
@@ -99,7 +146,14 @@ fun PlnTokenScreen(
                     }
                 }
             } else {
-                TokenForm(viewModel = viewModel, form = form, printing = printing)
+                TokenForm(
+                    viewModel = viewModel,
+                    form = form,
+                    printing = printing,
+                    scanning = scanning,
+                    onPickGallery = onPickGallery,
+                    onTakePhoto = onTakePhoto
+                )
             }
         }
     }
@@ -110,6 +164,9 @@ private fun TokenForm(
     viewModel: PlnTokenViewModel,
     form: PlnTokenFormState,
     printing: Boolean,
+    scanning: Boolean,
+    onPickGallery: () -> Unit,
+    onTakePhoto: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val settings by viewModel.settings.collectAsState()
@@ -133,6 +190,44 @@ private fun TokenForm(
                     )
                 }
             }
+        }
+
+        FormSection(
+            title = "Pindai dari Gambar (OCR)",
+            subtitle = "Auto-isi dari screenshot/foto struk dari aplikasi PLN/m-banking lain"
+        ) {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(
+                    onClick = onPickGallery,
+                    enabled = !scanning,
+                    modifier = Modifier.weight(1f).height(48.dp)
+                ) {
+                    if (scanning) {
+                        CircularProgressIndicator(
+                            strokeWidth = 2.dp,
+                            modifier = Modifier.size(16.dp)
+                        )
+                    } else {
+                        Icon(Icons.Default.Image, contentDescription = null)
+                    }
+                    Spacer(Modifier.width(6.dp))
+                    Text("Galeri")
+                }
+                OutlinedButton(
+                    onClick = onTakePhoto,
+                    enabled = !scanning,
+                    modifier = Modifier.weight(1f).height(48.dp)
+                ) {
+                    Icon(Icons.Default.PhotoCamera, contentDescription = null)
+                    Spacer(Modifier.width(6.dp))
+                    Text("Kamera")
+                }
+            }
+            Text(
+                "Hasil OCR otomatis mengisi field di bawah. Selalu cek ulang sebelum cetak — terutama 20 digit nomor token.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
         }
 
         FormSection(title = "Pelanggan", subtitle = "Identitas pemilik meter") {
@@ -307,7 +402,7 @@ private fun TokenForm(
             }
             Button(
                 onClick = { viewModel.print() },
-                enabled = !printing,
+                enabled = !printing && !scanning,
                 modifier = Modifier.weight(2f).height(48.dp)
             ) {
                 if (printing) {

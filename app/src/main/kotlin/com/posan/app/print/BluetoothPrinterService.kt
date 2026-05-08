@@ -71,7 +71,7 @@ class BluetoothPrinterService @Inject constructor(
         return BluetoothPrintersConnections().list?.firstOrNull { it.device.address == address }
     }
 
-    suspend fun testPrint(address: String, paperWidth: PaperWidth, mmFeedBeforeCut: Int = 5): Result<Unit> = withContext(Dispatchers.IO) {
+    suspend fun testPrint(address: String, paperWidth: PaperWidth, mmFeedBeforeCut: Int = 10): Result<Unit> = withContext(Dispatchers.IO) {
         runCatching {
             val connection = findConnection(address) ?: error("Printer tidak ditemukan / belum dipair")
             val printer = createPrinter(connection, paperWidth)
@@ -88,12 +88,15 @@ class BluetoothPrinterService @Inject constructor(
         copies: Int = 1,
         cutPaper: Boolean = true,
         openCashDrawer: Boolean = false,
-        mmFeedBeforeCut: Int = 5
+        mmFeedBeforeCut: Int = 10
     ): Result<Unit> = withContext(Dispatchers.IO) {
         runCatching {
             val connection = findConnection(address) ?: error("Printer tidak ditemukan / belum dipair")
             val printer = createPrinter(connection, paperWidth)
-            val text = formatted.trimEnd('\n', '\r', ' ', '\t')
+            // Trim excessive trailing whitespace, but keep one trailing newline so the
+            // last printed line isn't flush against the cut.
+            val trimmed = formatted.trimEnd('\n', '\r', ' ', '\t')
+            val text = "$trimmed\n[L]\n"
             val feed = mmFeedBeforeCut.coerceIn(0, 30).toFloat()
             repeat(copies.coerceAtLeast(1)) {
                 if (cutPaper) printer.printFormattedTextAndCut(text, feed) else printer.printFormattedText(text, feed)
