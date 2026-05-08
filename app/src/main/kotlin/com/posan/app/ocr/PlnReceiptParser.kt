@@ -5,8 +5,7 @@ import javax.inject.Singleton
 
 /**
  * Holds extracted PLN token receipt fields. Every field is optional because OCR
- * accuracy depends on screenshot quality and source app layout. The UI layer
- * decides which fields actually update the form.
+ * accuracy depends on screenshot quality and source app layout.
  */
 data class ParsedPlnReceipt(
     val customerId: String? = null,
@@ -31,144 +30,189 @@ data class ParsedPlnReceipt(
 }
 
 /**
- * Best-effort regex parser for PLN token receipt screenshots from various
- * source apps (PLN Mobile, m-banking, marketplace e-money, EDC printouts).
- * Patterns are loose on purpose — OCR errors are common (O <-> 0, l <-> 1).
+ * Line-based, label-aware parser for PLN token receipt screenshots.
+ *
+ * Strategy:
+ *  - Split OCR output into trimmed lines.
+ *  - For each field, scan lines top-down until any of its label aliases match.
+ *  - Extract the value either on the same line (after the label) or, if blank,
+ *    from the next non-empty line (handles screenshots where label and value
+ *    are on separate visual rows like ShopeePay's invoice template).
+ *  - Amounts are normalised to whole-rupiah strings using Indonesian
+ *    convention: `.` is thousands separator, `,` is decimal — so
+ *    "Rp 1.396,00" becomes "1396" (we drop sub-rupiah cents).
+ *  - Token detection looks for a 20-digit sequence (with optional dashes /
+ *    spaces) and prefers candidates appearing near a STROOM/TOKEN label.
  */
 @Singleton
 class PlnReceiptParser @Inject constructor() {
 
     fun parse(rawText: String): ParsedPlnReceipt {
         val text = rawText.replace('\u00A0', ' ')
-        val joined = text.replace('\n', ' ').replace(Regex("\\s+"), " ")
+        val lines = text.split('\n').map { it.trim() }
+        val joined = lines.joinToString(" ").replace(Regex("\\s+"), " ")
+
+        val tariffDaya = findText(lines, listOf(
+            "TARIF\\s*[/\\\\]?\\s*DAYA",
+            "GOLONGAN\\s*TARIF",
+            "GOL\\.?\\s*TARIF",
+            "TARIF",
+            "DAYA"
+        ))
 
         return ParsedPlnReceipt(
-            customerId = findValue(text, listOf(
+            customerId = findDigits(lines, listOf(
                 "ID\\s*PEL(?:ANGGAN)?",
-                "ID\\s*PLN",
-                "ID\\s*Pelanggan",
                 "IDPEL",
-                "ID\\s*Customer"
-            ), digitsOnly = true, minLen = 10, maxLen = 14),
-            customerName = findValue(text, listOf(
+                "NOMOR\\s*PEL(?:ANGGAN)?",
+                "NO\\.?\\s*PEL(?:ANGGAN)?",
+                "ID\\s*PLN",
+                "ID\\s*CUSTOMER"
+            ), minLen = 8, maxLen = 14),
+            customerName = findText(lines, listOf(
                 "NAMA\\s*PELANGGAN",
                 "NAMA\\s*PEL(?:ANGGAN)?",
                 "NAMA",
-                "NAME",
                 "CUSTOMER\\s*NAME"
-            ), digitsOnly = false, minLen = 2, maxLen = 60),
-            meterNo = findValue(text, listOf(
-                "NO\\s*METER",
-                "NO\\.\\s*METER",
+            ))?.let { sanitizeName(it) },
+            meterNo = findDigits(lines, listOf(
+                "NOMOR\\s*METER",
+                "NO\\.?\\s*METER",
+                "METER\\s*NO\\.?",
                 "NOMETER",
-                "METER\\s*NO",
-                "NOMOR\\s*METER"
-            ), digitsOnly = true, minLen = 8, maxLen = 14),
-            tariff = findValue(text, listOf(
-                "TARIF",
-                "GOLONGAN\\s*TARIF",
-                "GOL\\.\\s*TARIF"
-            ), digitsOnly = false, minLen = 1, maxLen = 8)?.let { extractTariff(it) },
-            power = findValue(text, listOf(
-                "DAYA",
-                "POWER"
-            ), digitsOnly = false, minLen = 1, maxLen = 12)?.let { extractPower(it) }
+                "METER\\s*NUMBER"
+            ), minLen = 8, maxLen = 14),
+            tariff = tariffDaya?.let { extractTariff(it) },
+            power = tariffDaya?.let { extractPower(it) }
                 ?: findPowerInline(joined),
-            referenceNo = findValue(text, listOf(
+            referenceNo = findText(lines, listOf(
                 "NO\\.?\\s*REF(?:ERENSI)?",
-                "REF\\s*NO",
-                "NOMOR\\s*REFERENSI",
+                "REF\\.?\\s*NO\\.?",
                 "REFF",
                 "ID\\s*TRANSAKSI",
-                "NO\\s*TRANSAKSI"
-            ), digitsOnly = false, minLen = 4, maxLen = 30),
-            token = extractToken(joined, text),
-            kwh = findKwh(text),
-            rpStroom = findValueAmount(text, listOf(
-                "STROOM[\\s/\\\\]?TOKEN",
+                "NO\\.?\\s*TRANSAKSI"
+            ))?.let { sanitizeRef(it, lines) },
+            token = extractToken(joined),
+            kwh = findKwh(lines),
+            rpStroom = findAmount(lines, listOf(
+                "RP\\s*STROOM\\s*[/\\\\]?\\s*TOKEN",
                 "RP\\s*STROOM",
-                "STROOM",
-                "TOKEN[\\s/\\\\]?LISTRIK",
-                "NILAI\\s*TOKEN"
+                "STROOM\\s*[/\\\\]?\\s*TOKEN",
+                "NILAI\\s*TOKEN",
+                "TOKEN\\s*LISTRIK",
+                "RP\\s*TOKEN"
             )),
-            adminFee = findValueAmount(text, listOf(
-                "ADM(?:IN)?(?:\\s*BANK)?",
+            adminFee = findAmount(lines, listOf(
                 "BIAYA\\s*ADM(?:IN)?",
-                "ADMIN\\s*FEE"
+                "ADM(?:IN)?\\s*BANK",
+                "ADMIN\\s*FEE",
+                "ADM(?:IN)?"
             )),
-            materai = findValueAmount(text, listOf(
-                "MATERAI",
-                "BEA\\s*MATERAI"
+            materai = findAmount(lines, listOf(
+                "BEA\\s*MATERAI",
+                "MATERAI"
             )),
-            ppn = findValueAmount(text, listOf(
+            ppn = findAmount(lines, listOf(
                 "PPN"
             )),
-            ppj = findValueAmount(text, listOf(
+            ppj = findAmount(lines, listOf(
                 "PPJ",
+                "PBJT[\\s\\-]?TL",
+                "PBJT",
                 "PAJAK\\s*PJU",
                 "PJU"
             )),
-            totalBayar = findValueAmount(text, listOf(
+            totalBayar = findAmount(lines, listOf(
                 "TOTAL\\s*BAYAR",
                 "TOTAL\\s*PEMBAYARAN",
+                "TOTAL\\s*TAGIHAN",
                 "JUMLAH\\s*BAYAR",
                 "TOTAL"
             ))
         )
     }
 
-    private fun findValue(
-        text: String,
+    private fun findLabelMatch(lines: List<String>, labels: List<String>): Pair<Int, MatchResult>? {
+        for ((i, line) in lines.withIndex()) {
+            for (label in labels) {
+                val r = Regex("(?i)(?<![A-Za-z])$label(?![A-Za-z])")
+                val m = r.find(line) ?: continue
+                return i to m
+            }
+        }
+        return null
+    }
+
+    private fun findText(lines: List<String>, labels: List<String>): String? {
+        val match = findLabelMatch(lines, labels) ?: return null
+        val (idx, m) = match
+        val sameLine = lines[idx].substring(m.range.last + 1)
+            .trimStart(' ', '\t', ':', '=', '-')
+            .trim()
+        if (sameLine.isNotBlank()) return sameLine
+        // Try the next non-blank line (label and value on separate rows).
+        for (j in (idx + 1) until minOf(lines.size, idx + 3)) {
+            if (lines[j].isNotBlank()) return lines[j]
+        }
+        return null
+    }
+
+    private fun findDigits(
+        lines: List<String>,
         labels: List<String>,
-        digitsOnly: Boolean,
         minLen: Int,
         maxLen: Int
     ): String? {
-        val sep = "[\\s:=\\-]+"
-        for (label in labels) {
-            val pattern = if (digitsOnly) {
-                Regex("$label$sep([0-9 .-]{$minLen,${maxLen + 6}})", RegexOption.IGNORE_CASE)
-            } else {
-                Regex("$label$sep([^\\n\\r]{$minLen,$maxLen})", RegexOption.IGNORE_CASE)
-            }
-            val m = pattern.find(text) ?: continue
-            val raw = m.groupValues[1]
-            val cleaned = if (digitsOnly) raw.filter { it.isDigit() } else raw.trim()
-            val truncated = cleaned.take(maxLen)
-            if (truncated.length >= minLen) return truncated
-        }
-        return null
+        val raw = findText(lines, labels) ?: return null
+        // Strip everything except digits, then enforce length window.
+        val digits = raw.filter { it.isDigit() }
+        if (digits.length < minLen) return null
+        return digits.take(maxLen)
     }
 
-    private fun findValueAmount(text: String, labels: List<String>): String? {
-        val sep = "[\\s:=\\-]+"
-        for (label in labels) {
-            val pattern = Regex(
-                "$label$sep(?:RP\\.?\\s*)?([0-9][0-9.,\\s]{2,})",
-                RegexOption.IGNORE_CASE
-            )
-            val m = pattern.find(text) ?: continue
-            val raw = m.groupValues[1]
-            val digits = raw.filter { it.isDigit() }
-            if (digits.isNotEmpty() && digits.length <= 12) {
-                return digits
-            }
-        }
-        return null
+    private fun findAmount(lines: List<String>, labels: List<String>): String? {
+        val raw = findText(lines, labels) ?: return null
+        return parseIndonesianAmount(raw)
     }
 
+    /**
+     * Indonesian rupiah convention: `.` = thousands separator, `,` = decimal.
+     * "Rp 1.396,00" -> 1396, "Rp46.511" -> 46511, "Rp 0,00" -> 0.
+     * Returns the captured whole-rupiah portion as a digit string, or null
+     * if no numeric content could be found.
+     */
+    private fun parseIndonesianAmount(raw: String): String? {
+        val match = Regex("(?:RP\\.?\\s*)?(-?[0-9][0-9.,\\s]{0,18})", RegexOption.IGNORE_CASE).find(raw)
+            ?: return null
+        var captured = match.groupValues[1].trim()
+        if (captured.isBlank()) return null
+        // Drop a trailing decimal section like ",00" or ".50".
+        captured = captured.replace(Regex("[.,]\\s*\\d{1,2}\\s*$"), "")
+        // Strip non-digits — leaves only the whole-rupiah portion.
+        val digits = captured.filter { it.isDigit() }
+        if (digits.isEmpty()) return null
+        return digits
+    }
+
+    /**
+     * Extract a tariff identifier like "R1", "R1M", "B1", "R2" from a
+     * "Tarif Daya" string. Tolerates "R1/00000900 VA" and "R1M / 900 VA".
+     */
     private fun extractTariff(raw: String): String? {
-        // "R1/900VA", "R1 900 VA", "R-1"
-        val r = Regex("[A-Z]\\s*[0-9]{1,2}[A-Z]?", RegexOption.IGNORE_CASE).find(raw)
-        return r?.value?.replace(" ", "")?.uppercase()
+        val r = Regex("([A-Z]\\s*[0-9]{1,2}[A-Z]?)", RegexOption.IGNORE_CASE).find(raw) ?: return null
+        return r.groupValues[1].replace(" ", "").uppercase()
     }
 
+    /**
+     * Extract a power rating like "900VA" or "1300VA". Strips leading zeros
+     * (some apps render "00000900 VA"). Falls back to inserting "VA" when no
+     * unit is on the line.
+     */
     private fun extractPower(raw: String): String? {
-        // "900 VA", "1300VA", "2200 W", "5500"
-        val r = Regex("([0-9][0-9.]{2,5})\\s*(VA|W|KVA)?", RegexOption.IGNORE_CASE).find(raw) ?: return null
-        val num = r.groupValues[1].filter { it.isDigit() || it == '.' }
+        val r = Regex("([0-9]{2,8})\\s*(VA|KVA|W|KW)?", RegexOption.IGNORE_CASE).find(raw) ?: return null
+        val num = r.groupValues[1].trimStart('0').ifBlank { "0" }
+        if (num == "0") return null
         val unit = r.groupValues[2].ifBlank { "VA" }.uppercase()
-        if (num.isBlank()) return null
         return "${num}${unit}"
     }
 
@@ -178,42 +222,69 @@ class PlnReceiptParser @Inject constructor() {
     }
 
     /**
-     * PLN token (STROOM) is always 20 digits, often grouped 4-4-4-4-4.
-     * Try to find 20 consecutive digits (with optional dashes/spaces between groups)
-     * anywhere in the text, but skip lines that are clearly meter/IDPel.
+     * Find the 20-digit STROOM/Token. Strategy:
+     *   1. Locate any sequence of 20 digits (possibly grouped with dashes or
+     *      single-character spaces) anywhere in the joined OCR text.
+     *   2. If multiple candidates, prefer the one closest after a
+     *      STROOM/TOKEN label.
+     *   3. Otherwise return the first 20-digit candidate.
      */
-    private fun extractToken(joined: String, raw: String): String? {
-        val labelMatch = Regex(
-            "(?:NO\\.?\\s*)?TOKEN(?:\\s*[/\\\\]?\\s*STROOM)?\\s*[:=\\-]?\\s*([0-9 \\-]{20,30})",
-            RegexOption.IGNORE_CASE
-        ).find(raw) ?: Regex(
-            "STROOM(?:\\s*[/\\\\]?\\s*TOKEN)?\\s*[:=\\-]?\\s*([0-9 \\-]{20,30})",
-            RegexOption.IGNORE_CASE
-        ).find(raw)
-        if (labelMatch != null) {
-            val digits = labelMatch.groupValues[1].filter { it.isDigit() }
-            if (digits.length == 20) return digits
+    private fun extractToken(joined: String): String? {
+        val candidates = Regex("[0-9][0-9 \\-]{18,40}").findAll(joined).toList()
+        val twenties = candidates.mapNotNull { m ->
+            val digits = m.value.filter { it.isDigit() }
+            if (digits.length == 20) m to digits else null
         }
-        // Fallback: any 20 consecutive digits (with possible separators)
-        val grouped = Regex("(\\d{4})[\\s\\-]?(\\d{4})[\\s\\-]?(\\d{4})[\\s\\-]?(\\d{4})[\\s\\-]?(\\d{4})")
-            .find(joined)
-        if (grouped != null) {
-            return grouped.groupValues.drop(1).joinToString("")
+        if (twenties.isEmpty()) return null
+        val labelEnds = Regex("(?i)(?:STROOM|TOKEN)").findAll(joined).map { it.range.last }.toList()
+        if (labelEnds.isNotEmpty()) {
+            val nearLabel = twenties.firstOrNull { (m, _) ->
+                labelEnds.any { e -> m.range.first in (e + 1)..(e + 80) }
+            }
+            if (nearLabel != null) return nearLabel.second
+        }
+        return twenties.first().second
+    }
+
+    private fun findKwh(lines: List<String>): String? {
+        val raw = findText(lines, listOf(
+            "JUMLAH\\s*KWH",
+            "JML\\s*KWH",
+            "TOTAL\\s*KWH",
+            "KWH"
+        ))
+        if (raw != null) {
+            val m = Regex("([0-9]+(?:[.,][0-9]+)?)").find(raw)
+            if (m != null) return m.groupValues[1].replace(',', '.')
+        }
+        for (line in lines) {
+            val m = Regex("([0-9]+(?:[.,][0-9]+)?)\\s*KWH", RegexOption.IGNORE_CASE).find(line)
+            if (m != null) return m.groupValues[1].replace(',', '.')
         }
         return null
     }
 
-    private fun findKwh(text: String): String? {
-        val patterns = listOf(
-            Regex("(JUMLAH\\s*KWH|KWH|JML\\s*KWH|TOTAL\\s*KWH)\\s*[:=\\-]?\\s*([0-9]+(?:[.,][0-9]+)?)", RegexOption.IGNORE_CASE),
-            Regex("([0-9]+(?:[.,][0-9]+)?)\\s*KWH", RegexOption.IGNORE_CASE)
-        )
-        for (p in patterns) {
-            val m = p.find(text) ?: continue
-            val raw = if (m.groupValues.size > 2) m.groupValues[2] else m.groupValues[1]
-            val normalized = raw.replace(',', '.').filter { it.isDigit() || it == '.' }
-            if (normalized.isNotBlank()) return normalized
+    private fun sanitizeName(raw: String): String {
+        return raw.split(Regex("\\s{2,}|[|]")).first().trim()
+            .takeIf { it.length in 2..60 } ?: raw.take(60)
+    }
+
+    /**
+     * Reference numbers are alphanumeric and sometimes wrap to a second line.
+     * We greedily merge the next line if it looks like a continuation
+     * (uppercase alnum-only).
+     */
+    private fun sanitizeRef(raw: String, lines: List<String>): String {
+        val first = raw.trim()
+        val idx = lines.indexOfFirst { it.contains(first) }
+        if (idx >= 0 && idx + 1 < lines.size) {
+            val next = lines[idx + 1].trim()
+            if (next.isNotEmpty() && next.all { it.isLetterOrDigit() } && next.length in 4..32 &&
+                next.uppercase() == next
+            ) {
+                return (first + next).take(40)
+            }
         }
-        return null
+        return first.take(40)
     }
 }
