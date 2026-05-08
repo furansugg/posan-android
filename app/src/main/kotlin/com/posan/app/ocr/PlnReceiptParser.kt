@@ -94,8 +94,8 @@ class PlnReceiptParser @Inject constructor() {
                 "ADM(?:IN)?"
             )),
             materai = findAmount(lines, listOf(
-                "BEA\\s*MATERAI",
-                "MATERAI"
+                "BEA\\s*M[AE]TERAI",
+                "M[AE]TERAI"
             )),
             ppn = findAmount(lines, listOf(
                 "PPN"
@@ -292,7 +292,15 @@ class PlnReceiptParser @Inject constructor() {
         if (t.contains('-') && !t.startsWith("-")) return false  // tokens have internal dashes
         if (t.contains('/')) return false
         if (!t.any { it.isDigit() }) return false
-        if (Regex("(?i)^\\s*Rp\\b").containsMatchIn(t)) return true
+        // Indonesian rupiah values rarely exceed 7 digits without separators; a long
+        // unbroken digit run is almost certainly a token / ID, not an amount.
+        val digits = t.filter { it.isDigit() }
+        val hasSeparator = t.any { it == '.' || it == ',' || it == ' ' }
+        if (digits.length >= 9 && !hasSeparator) return false
+        // Accept "Rp" prefix as long as it isn't followed by another letter — covers
+        // "Rp0", "Rp 0", "Rp46.511", "Rp 1.400". Word-boundary `\b` would FAIL here
+        // because both "p" and a following digit are word characters.
+        if (Regex("(?i)^\\s*Rp\\.?(?![A-Za-z])").containsMatchIn(t)) return true
         return t.matches(Regex("[0-9][0-9.,\\s]*"))
     }
 
