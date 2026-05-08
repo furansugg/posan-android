@@ -23,6 +23,7 @@ data class PrintSettingsEntity(
     val bodyFontSmall: Boolean = false,
     val printCopies: Int = 1,
     val cutPaper: Boolean = true,
+    val mmFeedBeforeCut: Int = 5,
     val openCashDrawer: Boolean = false,
     val savedDeviceAddress: String? = null,
     val savedDeviceName: String? = null,

@@ -17,6 +17,25 @@ data class ReceiptInput(
     val customerName: String? = null
 )
 
+data class PlnTokenInput(
+    val referenceNo: String,
+    val meterNo: String,
+    val customerId: String,
+    val customerName: String,
+    val tariff: String,
+    val power: String,
+    val token: String,
+    val kwh: Double,
+    val rpStroom: Double,
+    val adminFee: Double,
+    val materai: Double,
+    val ppn: Double,
+    val ppj: Double,
+    val totalBayar: Double,
+    val cashierName: String? = null,
+    val createdAt: Long = System.currentTimeMillis()
+)
+
 @Singleton
 class ReceiptComposer @Inject constructor() {
 
@@ -140,8 +159,109 @@ class ReceiptComposer @Inject constructor() {
         if (settings.footerText.isNotBlank()) {
             settings.footerText.split('\n').forEach { sb.appendLine("[$alignTag]${it.trim()}") }
         }
-        sb.appendLine("[C]\n")
+        return sb.toString().trimEnd('\n', '\r')
+    }
+
+    fun composePlnTokenPlain(input: PlnTokenInput, settings: PrintSettingsEntity): String {
+        val w = width(settings)
+        val sb = StringBuilder()
+        val align = PrintAlignment.fromName(settings.titleAlignment)
+
+        if (settings.storeName.isNotBlank()) sb.appendLine(alignText(settings.storeName, w, align))
+        if (settings.storeAddress.isNotBlank()) {
+            settings.storeAddress.split('\n').forEach { sb.appendLine(alignText(it.trim(), w, align)) }
+        }
+        if (settings.storePhone.isNotBlank()) sb.appendLine(alignText("Telp: ${settings.storePhone}", w, align))
+        sb.appendLine(alignText("STRUK TOKEN PLN", w, PrintAlignment.CENTER))
+        sb.appendLine("=".repeat(w))
+        sb.appendLine("No Ref     : ${input.referenceNo}")
+        sb.appendLine("Tanggal    : ${Format.datetime(input.createdAt)}")
+        if (settings.showCashier && !input.cashierName.isNullOrBlank()) {
+            sb.appendLine("Kasir      : ${input.cashierName}")
+        }
+        sb.appendLine("-".repeat(w))
+        sb.appendLine("ID Pelanggan: ${input.customerId}")
+        sb.appendLine("Nama        : ${input.customerName}")
+        sb.appendLine("No Meter    : ${input.meterNo}")
+        sb.appendLine("Tarif/Daya  : ${input.tariff}/${input.power}")
+        sb.appendLine("-".repeat(w))
+        sb.appendLine(twoColumn("Rp Stroom", Format.number(input.rpStroom), w))
+        if (input.adminFee > 0) sb.appendLine(twoColumn("Admin Bank", Format.number(input.adminFee), w))
+        if (input.materai > 0) sb.appendLine(twoColumn("Materai", Format.number(input.materai), w))
+        if (input.ppn > 0) sb.appendLine(twoColumn("PPN", Format.number(input.ppn), w))
+        if (input.ppj > 0) sb.appendLine(twoColumn("PPJ", Format.number(input.ppj), w))
+        sb.appendLine("-".repeat(w))
+        sb.appendLine(twoColumn("TOTAL BAYAR", "${settings.currencySymbol} ${Format.number(input.totalBayar)}", w))
+        sb.appendLine(twoColumn("Jumlah kWh", "${Format.number(input.kwh)} kWh", w))
+        sb.appendLine("=".repeat(w))
+        sb.appendLine(alignText("NO. TOKEN / STROOM", w, PrintAlignment.CENTER))
+        sb.appendLine(alignText(formatToken(input.token), w, PrintAlignment.CENTER))
+        sb.appendLine("=".repeat(w))
+        sb.appendLine(alignText("Simpan struk ini sebagai bukti", w, PrintAlignment.CENTER))
+        sb.appendLine(alignText("pembayaran yang sah", w, PrintAlignment.CENTER))
+        if (settings.footerText.isNotBlank()) {
+            settings.footerText.split('\n').forEach { sb.appendLine(alignText(it.trim(), w, align)) }
+        }
         return sb.toString()
+    }
+
+    fun composePlnTokenEscPos(input: PlnTokenInput, settings: PrintSettingsEntity): String {
+        val align = PrintAlignment.fromName(settings.titleAlignment)
+        val alignTag = when (align) {
+            PrintAlignment.LEFT -> "L"
+            PrintAlignment.CENTER -> "C"
+            PrintAlignment.RIGHT -> "R"
+        }
+        val w = width(settings)
+        val bodyTag = "L"
+        val sb = StringBuilder()
+
+        if (settings.storeName.isNotBlank()) {
+            sb.appendLine("[$alignTag]<u><b>${settings.storeName}</b></u>")
+        }
+        if (settings.storeAddress.isNotBlank()) {
+            settings.storeAddress.split('\n').forEach {
+                sb.appendLine("[$alignTag]${it.trim()}")
+            }
+        }
+        if (settings.storePhone.isNotBlank()) sb.appendLine("[$alignTag]Telp: ${settings.storePhone}")
+        sb.appendLine("[C]<b>STRUK TOKEN PLN</b>")
+        sb.appendLine("[$bodyTag]${"=".repeat(w)}")
+        sb.appendLine("[$bodyTag]No Ref     : ${input.referenceNo}")
+        sb.appendLine("[$bodyTag]Tanggal    : ${Format.datetime(input.createdAt)}")
+        if (settings.showCashier && !input.cashierName.isNullOrBlank()) {
+            sb.appendLine("[$bodyTag]Kasir      : ${input.cashierName}")
+        }
+        sb.appendLine("[$bodyTag]${"-".repeat(w)}")
+        sb.appendLine("[$bodyTag]ID Pelanggan: ${input.customerId}")
+        sb.appendLine("[$bodyTag]Nama        : ${input.customerName}")
+        sb.appendLine("[$bodyTag]No Meter    : ${input.meterNo}")
+        sb.appendLine("[$bodyTag]Tarif/Daya  : ${input.tariff}/${input.power}")
+        sb.appendLine("[$bodyTag]${"-".repeat(w)}")
+        sb.appendLine("[$bodyTag]${twoColumn("Rp Stroom", Format.number(input.rpStroom), w)}")
+        if (input.adminFee > 0) sb.appendLine("[$bodyTag]${twoColumn("Admin Bank", Format.number(input.adminFee), w)}")
+        if (input.materai > 0) sb.appendLine("[$bodyTag]${twoColumn("Materai", Format.number(input.materai), w)}")
+        if (input.ppn > 0) sb.appendLine("[$bodyTag]${twoColumn("PPN", Format.number(input.ppn), w)}")
+        if (input.ppj > 0) sb.appendLine("[$bodyTag]${twoColumn("PPJ", Format.number(input.ppj), w)}")
+        sb.appendLine("[$bodyTag]${"-".repeat(w)}")
+        sb.appendLine("[$bodyTag]<b>${twoColumn("TOTAL BAYAR", "${settings.currencySymbol} ${Format.number(input.totalBayar)}", w)}</b>")
+        sb.appendLine("[$bodyTag]${twoColumn("Jumlah kWh", "${Format.number(input.kwh)} kWh", w)}")
+        sb.appendLine("[$bodyTag]${"=".repeat(w)}")
+        sb.appendLine("[C]NO. TOKEN / STROOM")
+        sb.appendLine("[C]<b>${formatToken(input.token)}</b>")
+        sb.appendLine("[$bodyTag]${"=".repeat(w)}")
+        sb.appendLine("[C]Simpan struk ini sebagai bukti")
+        sb.appendLine("[C]pembayaran yang sah")
+        if (settings.footerText.isNotBlank()) {
+            settings.footerText.split('\n').forEach { sb.appendLine("[$alignTag]${it.trim()}") }
+        }
+        return sb.toString().trimEnd('\n', '\r')
+    }
+
+    private fun formatToken(token: String): String {
+        val digits = token.filter { it.isDigit() }
+        if (digits.isEmpty()) return token
+        return digits.chunked(4).joinToString("-")
     }
 
     private fun alignText(text: String, width: Int, alignment: PrintAlignment): String {

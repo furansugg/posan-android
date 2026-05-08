@@ -19,6 +19,7 @@ import com.posan.app.ui.customers.CustomersScreen
 import com.posan.app.ui.dashboard.DashboardScreen
 import com.posan.app.ui.login.LoginScreen
 import com.posan.app.ui.login.SessionViewModel
+import com.posan.app.ui.plntoken.PlnTokenScreen
 import com.posan.app.ui.pos.PosScreen
 import com.posan.app.ui.printer.PrinterDeviceScreen
 import com.posan.app.ui.printsettings.PrintSettingsScreen
@@ -46,6 +47,7 @@ object Routes {
     const val PRINT_SETTINGS = "print_settings"
     const val PRINTER_DEVICES = "printer_devices"
     const val BACKUP = "backup"
+    const val PLN_TOKEN = "pln_token"
 }
 
 @Composable
@@ -138,6 +140,9 @@ fun PosanRoot() {
         }
         composable(Routes.BACKUP) {
             BackupScreen(onBack = { navController.popBackStack() })
+        }
+        composable(Routes.PLN_TOKEN) {
+            PlnTokenScreen(onBack = { navController.popBackStack() })
         }
     }
 }

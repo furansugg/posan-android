@@ -17,6 +17,8 @@ import com.posan.app.data.local.entity.StockMovementEntity
 import com.posan.app.data.local.entity.TransactionEntity
 import com.posan.app.data.local.entity.TransactionItemEntity
 import com.posan.app.data.local.entity.UserEntity
+import androidx.room.migration.Migration
+import androidx.sqlite.db.SupportSQLiteDatabase
 
 @Database(
     entities = [
@@ -29,7 +31,7 @@ import com.posan.app.data.local.entity.UserEntity
         StockMovementEntity::class,
         PrintSettingsEntity::class
     ],
-    version = 1,
+    version = 2,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -43,5 +45,11 @@ abstract class AppDatabase : RoomDatabase() {
 
     companion object {
         const val DB_NAME = "posan.db"
+
+        val MIGRATION_1_2 = object : Migration(1, 2) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE print_settings ADD COLUMN mmFeedBeforeCut INTEGER NOT NULL DEFAULT 5")
+            }
+        }
     }
 }

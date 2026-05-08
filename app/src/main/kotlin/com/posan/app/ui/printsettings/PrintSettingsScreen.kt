@@ -265,6 +265,18 @@ private fun SettingsForm(
             Toggle("Tampilkan pelanggan", draft.showCustomer, viewModel::setShowCustomer)
             Toggle("Tampilkan SKU di item", draft.showItemSku, viewModel::setShowItemSku)
             Toggle("Potong kertas", draft.cutPaper, viewModel::setCutPaper)
+            if (draft.cutPaper) {
+                OutlinedTextField(
+                    value = draft.mmFeedBeforeCut.toString(),
+                    onValueChange = { v -> viewModel.setMmFeedBeforeCut(v.toIntOrNull() ?: 5) },
+                    label = { Text("Jarak feed sebelum potong (mm, 0-30)") },
+                    supportingText = { Text("Kecilkan untuk hilangkan spasi kosong di bawah teks. 3-5mm umum aman.") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = MaterialTheme.shapes.medium
+                )
+            }
             Toggle("Buka cash drawer", draft.openCashDrawer, viewModel::setOpenDrawer)
         }
 

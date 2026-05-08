@@ -71,22 +71,32 @@ class BluetoothPrinterService @Inject constructor(
         return BluetoothPrintersConnections().list?.firstOrNull { it.device.address == address }
     }
 
-    suspend fun testPrint(address: String, paperWidth: PaperWidth): Result<Unit> = withContext(Dispatchers.IO) {
+    suspend fun testPrint(address: String, paperWidth: PaperWidth, mmFeedBeforeCut: Int = 5): Result<Unit> = withContext(Dispatchers.IO) {
         runCatching {
             val connection = findConnection(address) ?: error("Printer tidak ditemukan / belum dipair")
             val printer = createPrinter(connection, paperWidth)
-            printer.printFormattedTextAndCut(testReceipt())
+            printer.printFormattedTextAndCut(testReceipt(), mmFeedBeforeCut.coerceIn(0, 30).toFloat())
             printer.disconnectPrinter()
             Unit
         }
     }
 
-    suspend fun print(address: String, formatted: String, paperWidth: PaperWidth, copies: Int = 1, cutPaper: Boolean = true, openCashDrawer: Boolean = false): Result<Unit> = withContext(Dispatchers.IO) {
+    suspend fun print(
+        address: String,
+        formatted: String,
+        paperWidth: PaperWidth,
+        copies: Int = 1,
+        cutPaper: Boolean = true,
+        openCashDrawer: Boolean = false,
+        mmFeedBeforeCut: Int = 5
+    ): Result<Unit> = withContext(Dispatchers.IO) {
         runCatching {
             val connection = findConnection(address) ?: error("Printer tidak ditemukan / belum dipair")
             val printer = createPrinter(connection, paperWidth)
+            val text = formatted.trimEnd('\n', '\r', ' ', '\t')
+            val feed = mmFeedBeforeCut.coerceIn(0, 30).toFloat()
             repeat(copies.coerceAtLeast(1)) {
-                if (cutPaper) printer.printFormattedTextAndCut(formatted) else printer.printFormattedText(formatted)
+                if (cutPaper) printer.printFormattedTextAndCut(text, feed) else printer.printFormattedText(text, feed)
             }
             if (openCashDrawer) {
                 runCatching { printer.printFormattedText("[C]\u001Bp\u0000\u0019\u00FA") }

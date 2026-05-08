@@ -73,6 +73,7 @@ class PrintSettingsViewModel @Inject constructor(
     fun setBodySmall(v: Boolean) = update { it.copy(bodyFontSmall = v) }
     fun setCopies(v: Int) = update { it.copy(printCopies = v.coerceIn(1, 5)) }
     fun setCutPaper(v: Boolean) = update { it.copy(cutPaper = v) }
+    fun setMmFeedBeforeCut(v: Int) = update { it.copy(mmFeedBeforeCut = v.coerceIn(0, 30)) }
     fun setOpenDrawer(v: Boolean) = update { it.copy(openCashDrawer = v) }
     fun setTaxDefault(v: Double) = update { it.copy(taxPercentDefault = v.coerceIn(0.0, 100.0)) }
     fun setCurrency(v: String) = update { it.copy(currencySymbol = v) }
@@ -106,7 +107,8 @@ class PrintSettingsViewModel @Inject constructor(
                 paperWidth = PaperWidth.fromName(settings.paperWidth),
                 copies = 1,
                 cutPaper = settings.cutPaper,
-                openCashDrawer = false
+                openCashDrawer = false,
+                mmFeedBeforeCut = settings.mmFeedBeforeCut
             )
             _testing.value = false
             _message.value = if (result.isSuccess) "Test print berhasil" else result.exceptionOrNull()?.message ?: "Gagal mencetak"

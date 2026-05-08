@@ -20,6 +20,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Logout
 import androidx.compose.material.icons.filled.Backup
+import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.Category
 import androidx.compose.material.icons.filled.Group
 import androidx.compose.material.icons.filled.Inventory2
@@ -368,6 +369,7 @@ private val MENU_ITEMS = listOf(
     MenuItem("Laporan", Icons.Default.TrendingUp, Routes.REPORT, CatRose),
     MenuItem("Stok", Icons.Default.Inventory2, Routes.STOCK, CatGreen),
     MenuItem("Pengguna", Icons.Default.Group, Routes.USERS, CatGray),
+    MenuItem("Token PLN", Icons.Default.Bolt, Routes.PLN_TOKEN, CatOrange),
     MenuItem("Cetak", Icons.Default.Print, Routes.PRINT_SETTINGS, CatRed),
     MenuItem("Backup", Icons.Default.Backup, Routes.BACKUP, CatCyan),
     MenuItem("Printer", Icons.Default.Print, Routes.PRINTER_DEVICES, CatBlue)
