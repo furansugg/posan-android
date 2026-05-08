@@ -12,7 +12,9 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -25,8 +27,10 @@ import androidx.compose.material.icons.filled.People
 import androidx.compose.material.icons.filled.PointOfSale
 import androidx.compose.material.icons.filled.Print
 import androidx.compose.material.icons.filled.Receipt
+import androidx.compose.material.icons.filled.ReceiptLong
 import androidx.compose.material.icons.filled.ShoppingBag
 import androidx.compose.material.icons.filled.TrendingUp
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
@@ -40,13 +44,28 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.posan.app.ui.Routes
-import com.posan.app.ui.components.SimpleAppBar
+import com.posan.app.ui.components.IconBadge
+import com.posan.app.ui.components.SectionHeader
+import com.posan.app.ui.theme.Brand500
+import com.posan.app.ui.theme.Brand700
+import com.posan.app.ui.theme.CatBlue
+import com.posan.app.ui.theme.CatCyan
+import com.posan.app.ui.theme.CatGray
+import com.posan.app.ui.theme.CatGreen
+import com.posan.app.ui.theme.CatOrange
+import com.posan.app.ui.theme.CatPink
+import com.posan.app.ui.theme.CatPurple
+import com.posan.app.ui.theme.CatRed
+import com.posan.app.ui.theme.CatRose
+import com.posan.app.ui.theme.CatTeal
+import com.posan.app.ui.theme.Warning500
 
 @Composable
 fun DashboardScreen(
@@ -57,109 +76,246 @@ fun DashboardScreen(
     val state by viewModel.state.collectAsState()
 
     Scaffold(
-        topBar = {
-            SimpleAppBar(
-                title = "Posan POS",
-                actions = {
-                    IconButton(onClick = { viewModel.logout(onLogout) }) {
-                        Icon(Icons.AutoMirrored.Filled.Logout, contentDescription = "Keluar")
-                    }
-                }
-            )
-        }
+        containerColor = MaterialTheme.colorScheme.background
     ) { padding ->
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
                 .verticalScroll(rememberScrollState())
-                .padding(16.dp)
         ) {
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primary)
-            ) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Text(
-                        text = "Halo, ${state.name}",
-                        style = MaterialTheme.typography.titleMedium,
-                        color = MaterialTheme.colorScheme.onPrimary
-                    )
-                    Text(
-                        text = state.role,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.85f)
-                    )
-                    Spacer(Modifier.height(12.dp))
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        StatCell(
-                            label = "Pendapatan hari ini",
-                            value = viewModel.moneyText(state.todayRevenue),
-                            modifier = Modifier.weight(1f)
-                        )
-                        Spacer(Modifier.width(12.dp))
-                        StatCell(
-                            label = "Transaksi",
-                            value = state.todayTransactions.toString(),
-                            modifier = Modifier.weight(1f)
-                        )
-                    }
-                    if (state.lowStockCount > 0) {
-                        Spacer(Modifier.height(8.dp))
-                        Text(
-                            text = "Stok menipis: ${state.lowStockCount} produk",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onPrimary
-                        )
-                    }
-                }
-            }
-            Spacer(Modifier.height(16.dp))
-            Text(
-                text = "Menu",
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.SemiBold
+            DashboardHero(
+                name = state.name,
+                role = state.role,
+                revenueText = viewModel.moneyText(state.todayRevenue),
+                txCount = state.todayTransactions,
+                onLogout = { viewModel.logout(onLogout) }
             )
-            Spacer(Modifier.height(8.dp))
-            MENU_ITEMS.chunked(3).forEach { row ->
-                Row(modifier = Modifier.fillMaxWidth()) {
-                    row.forEach { item ->
+
+            Column(
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 16.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                if (state.lowStockCount > 0) {
+                    LowStockBanner(count = state.lowStockCount, onClick = { onNavigate(Routes.STOCK) })
+                }
+
+                SectionHeader(title = "Aksi Cepat", subtitle = "Mulai dengan satu sentuhan")
+                QuickActionsRow(onNavigate = onNavigate)
+
+                SectionHeader(title = "Manajemen", subtitle = "Kelola data toko Anda")
+                LazyVerticalGrid(
+                    columns = GridCells.Fixed(3),
+                    modifier = Modifier.height(((MENU_ITEMS.size / 3 + if (MENU_ITEMS.size % 3 != 0) 1 else 0) * 108).dp),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                    userScrollEnabled = false
+                ) {
+                    items(MENU_ITEMS) { item ->
                         MenuTile(
                             title = item.title,
                             icon = item.icon,
                             tint = item.tint,
-                            modifier = Modifier.weight(1f),
                             onClick = { onNavigate(item.route) }
                         )
                     }
-                    repeat(3 - row.size) {
-                        Spacer(modifier = Modifier.weight(1f))
-                    }
                 }
+                Spacer(Modifier.height(8.dp))
             }
         }
     }
 }
 
 @Composable
-private fun StatCell(label: String, value: String, modifier: Modifier = Modifier) {
+private fun DashboardHero(
+    name: String,
+    role: String,
+    revenueText: String,
+    txCount: Int,
+    onLogout: () -> Unit
+) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(Brush.verticalGradient(listOf(Brand700, Brand500)))
+    ) {
+        Column(modifier = Modifier.padding(horizontal = 20.dp, vertical = 18.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "Selamat datang",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Color.White.copy(alpha = 0.85f)
+                    )
+                    Text(
+                        text = name.ifBlank { "Posan POS" },
+                        style = MaterialTheme.typography.headlineMedium,
+                        color = Color.White,
+                        fontWeight = FontWeight.Bold
+                    )
+                    if (role.isNotBlank()) {
+                        Text(
+                            text = role,
+                            style = MaterialTheme.typography.labelMedium,
+                            color = Color.White.copy(alpha = 0.85f)
+                        )
+                    }
+                }
+                IconButton(onClick = onLogout) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.Logout,
+                        contentDescription = "Keluar",
+                        tint = Color.White
+                    )
+                }
+            }
+            Spacer(Modifier.height(16.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                HeroStat(
+                    label = "Pendapatan hari ini",
+                    value = revenueText,
+                    icon = Icons.Default.TrendingUp,
+                    modifier = Modifier.weight(1f)
+                )
+                HeroStat(
+                    label = "Transaksi",
+                    value = txCount.toString(),
+                    icon = Icons.Default.ReceiptLong,
+                    modifier = Modifier.weight(1f)
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun HeroStat(label: String, value: String, icon: ImageVector, modifier: Modifier = Modifier) {
     Box(
         modifier = modifier
             .clip(MaterialTheme.shapes.medium)
-            .background(MaterialTheme.colorScheme.primaryContainer)
-            .padding(12.dp)
+            .background(Color.White.copy(alpha = 0.18f))
+            .padding(14.dp)
     ) {
         Column {
-            Text(
-                text = label,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurface
-            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    modifier = Modifier
+                        .size(28.dp)
+                        .clip(MaterialTheme.shapes.small)
+                        .background(Color.White.copy(alpha = 0.22f)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(imageVector = icon, contentDescription = null, tint = Color.White, modifier = Modifier.size(16.dp))
+                }
+                Spacer(Modifier.size(8.dp))
+                Text(
+                    text = label,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = Color.White.copy(alpha = 0.85f)
+                )
+            }
+            Spacer(Modifier.height(8.dp))
             Text(
                 text = value,
+                style = MaterialTheme.typography.headlineSmall,
+                color = Color.White,
+                fontWeight = FontWeight.Bold
+            )
+        }
+    }
+}
+
+@Composable
+private fun LowStockBanner(count: Int, onClick: () -> Unit) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+        border = androidx.compose.foundation.BorderStroke(1.dp, Warning500.copy(alpha = 0.4f))
+    ) {
+        Row(
+            modifier = Modifier.padding(14.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            IconBadge(icon = Icons.Default.Warning, tint = Warning500, boxSize = 40.dp, iconSize = 22.dp)
+            Spacer(Modifier.size(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "Perhatian stok",
+                    style = MaterialTheme.typography.titleSmall,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                Text(
+                    text = "$count produk hampir/habis stok",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            Text(
+                text = "Tinjau",
+                style = MaterialTheme.typography.labelLarge,
+                color = Warning500,
+                fontWeight = FontWeight.SemiBold
+            )
+        }
+    }
+}
+
+@Composable
+private fun QuickActionsRow(onNavigate: (String) -> Unit) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        QuickAction(
+            title = "Buka Kasir",
+            subtitle = "Mulai transaksi",
+            icon = Icons.Default.PointOfSale,
+            tint = Brand500,
+            modifier = Modifier.weight(1f),
+            onClick = { onNavigate(Routes.POS) }
+        )
+        QuickAction(
+            title = "Riwayat",
+            subtitle = "Cek penjualan",
+            icon = Icons.Default.Receipt,
+            tint = CatPurple,
+            modifier = Modifier.weight(1f),
+            onClick = { onNavigate(Routes.TRANSACTIONS) }
+        )
+    }
+}
+
+@Composable
+private fun QuickAction(
+    title: String,
+    subtitle: String,
+    icon: ImageVector,
+    tint: Color,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit
+) {
+    Card(
+        modifier = modifier.clickable(onClick = onClick),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+    ) {
+        Column(modifier = Modifier.padding(14.dp)) {
+            IconBadge(icon = icon, tint = tint)
+            Spacer(Modifier.height(10.dp))
+            Text(
+                text = title,
                 style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.onSurface
+                color = MaterialTheme.colorScheme.onSurface,
+                fontWeight = FontWeight.SemiBold
+            )
+            Text(
+                text = subtitle,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
     }
@@ -170,35 +326,28 @@ private fun MenuTile(
     title: String,
     icon: ImageVector,
     tint: Color,
-    modifier: Modifier = Modifier,
     onClick: () -> Unit
 ) {
     Card(
-        modifier = modifier
-            .padding(6.dp)
+        modifier = Modifier
+            .fillMaxWidth()
             .height(98.dp)
-            .clickable(onClick = onClick)
+            .clickable(onClick = onClick),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
     ) {
         Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(8.dp),
+            modifier = Modifier.fillMaxSize().padding(8.dp),
             verticalArrangement = Arrangement.Center,
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Box(
-                modifier = Modifier
-                    .size(38.dp)
-                    .clip(MaterialTheme.shapes.medium)
-                    .background(tint.copy(alpha = 0.15f)),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(imageVector = icon, contentDescription = null, tint = tint)
-            }
+            IconBadge(icon = icon, tint = tint, boxSize = 40.dp, iconSize = 20.dp)
             Spacer(Modifier.height(8.dp))
             Text(
                 text = title,
-                style = MaterialTheme.typography.bodySmall,
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.onSurface,
                 fontWeight = FontWeight.Medium
             )
         }
@@ -213,14 +362,13 @@ private data class MenuItem(
 )
 
 private val MENU_ITEMS = listOf(
-    MenuItem("Kasir", Icons.Default.PointOfSale, Routes.POS, Color(0xFF0D6EFD)),
-    MenuItem("Produk", Icons.Default.ShoppingBag, Routes.PRODUCTS, Color(0xFF20C997)),
-    MenuItem("Kategori", Icons.Default.Category, Routes.CATEGORIES, Color(0xFFFD7E14)),
-    MenuItem("Pelanggan", Icons.Default.People, Routes.CUSTOMERS, Color(0xFFD63384)),
-    MenuItem("Riwayat", Icons.Default.Receipt, Routes.TRANSACTIONS, Color(0xFF6610F2)),
-    MenuItem("Laporan", Icons.Default.TrendingUp, Routes.REPORT, Color(0xFFE83E8C)),
-    MenuItem("Stok", Icons.Default.Inventory2, Routes.STOCK, Color(0xFF198754)),
-    MenuItem("Pengguna", Icons.Default.Group, Routes.USERS, Color(0xFF6C757D)),
-    MenuItem("Cetak", Icons.Default.Print, Routes.PRINT_SETTINGS, Color(0xFFDC3545)),
-    MenuItem("Backup", Icons.Default.Backup, Routes.BACKUP, Color(0xFF0DCAF0))
+    MenuItem("Produk", Icons.Default.ShoppingBag, Routes.PRODUCTS, CatTeal),
+    MenuItem("Kategori", Icons.Default.Category, Routes.CATEGORIES, CatOrange),
+    MenuItem("Pelanggan", Icons.Default.People, Routes.CUSTOMERS, CatPink),
+    MenuItem("Laporan", Icons.Default.TrendingUp, Routes.REPORT, CatRose),
+    MenuItem("Stok", Icons.Default.Inventory2, Routes.STOCK, CatGreen),
+    MenuItem("Pengguna", Icons.Default.Group, Routes.USERS, CatGray),
+    MenuItem("Cetak", Icons.Default.Print, Routes.PRINT_SETTINGS, CatRed),
+    MenuItem("Backup", Icons.Default.Backup, Routes.BACKUP, CatCyan),
+    MenuItem("Printer", Icons.Default.Print, Routes.PRINTER_DEVICES, CatBlue)
 )

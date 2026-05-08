@@ -2,6 +2,7 @@ package com.posan.app.ui.users
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -14,10 +15,10 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Group
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Card
+import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.FilterChip
-import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -33,12 +34,18 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.posan.app.domain.model.UserRole
+import com.posan.app.ui.components.Avatar
+import com.posan.app.ui.components.EmptyState
+import com.posan.app.ui.components.ListItemCard
+import com.posan.app.ui.components.RoleBadge
 import com.posan.app.ui.components.SimpleAppBar
+import com.posan.app.ui.components.StatusPill
+import com.posan.app.ui.components.avatarColorFor
+import com.posan.app.ui.theme.Danger500
 
 @Composable
 fun UsersScreen(
@@ -57,30 +64,61 @@ fun UsersScreen(
     }
 
     Scaffold(
-        topBar = { SimpleAppBar(title = "Pengguna", onBack = onBack) },
+        topBar = {
+            SimpleAppBar(
+                title = "Pengguna",
+                subtitle = if (users.isEmpty()) "Belum ada pengguna" else "${users.size} pengguna",
+                onBack = onBack
+            )
+        },
         floatingActionButton = {
-            FloatingActionButton(onClick = { viewModel.openForm() }) {
-                Icon(Icons.Default.Add, contentDescription = "Tambah pengguna")
-            }
+            ExtendedFloatingActionButton(
+                onClick = { viewModel.openForm() },
+                icon = { Icon(Icons.Default.Add, contentDescription = null) },
+                text = { Text("Tambah") }
+            )
         }
     ) { padding ->
-        LazyColumn(modifier = Modifier.fillMaxSize().padding(padding).padding(12.dp)) {
-            items(users, key = { it.id }) { user ->
-                Card(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth().padding(12.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(user.name, fontWeight = FontWeight.Medium)
-                            Text("@${user.username} · ${UserRole.fromName(user.role).displayName}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            if (!user.active) Text("Nonaktif", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+        if (users.isEmpty()) {
+            EmptyState(
+                title = "Belum ada pengguna",
+                subtitle = "Tambahkan kasir atau admin baru",
+                icon = Icons.Default.Group,
+                actionLabel = "Tambah Pengguna",
+                onAction = { viewModel.openForm() }
+            )
+        } else {
+            LazyColumn(
+                modifier = Modifier.fillMaxSize().padding(padding),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp)
+            ) {
+                items(users, key = { it.id }) { user ->
+                    ListItemCard(
+                        leading = { Avatar(text = user.name, color = avatarColorFor(user.username)) },
+                        title = user.name,
+                        subtitle = "@${user.username}",
+                        extra = {
+                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                RoleBadge(role = user.role)
+                                if (!user.active) {
+                                    StatusPill(label = "Nonaktif", color = Danger500)
+                                }
+                            }
+                        },
+                        trailing = {
+                            IconButton(onClick = { viewModel.openForm(user) }) {
+                                Icon(Icons.Default.Edit, contentDescription = "Edit")
+                            }
+                            IconButton(onClick = { viewModel.delete(user) }) {
+                                Icon(
+                                    Icons.Default.Delete,
+                                    contentDescription = "Hapus",
+                                    tint = MaterialTheme.colorScheme.error
+                                )
+                            }
                         }
-                        IconButton(onClick = { viewModel.openForm(user) }) { Icon(Icons.Default.Edit, contentDescription = "Edit") }
-                        IconButton(onClick = { viewModel.delete(user) }) {
-                            Icon(Icons.Default.Delete, contentDescription = "Hapus", tint = MaterialTheme.colorScheme.error)
-                        }
-                    }
+                    )
                 }
             }
         }
@@ -89,35 +127,43 @@ fun UsersScreen(
     if (state.showForm) {
         AlertDialog(
             onDismissRequest = viewModel::closeForm,
-            title = { Text(if (state.editing == null) "Pengguna baru" else "Edit pengguna") },
+            icon = { Icon(Icons.Default.Group, contentDescription = null) },
+            title = { Text(if (state.editing == null) "Pengguna Baru" else "Edit Pengguna") },
             text = {
-                Column {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedTextField(
                         value = state.username,
                         onValueChange = viewModel::setUsername,
                         label = { Text("Username") },
                         singleLine = true,
                         enabled = state.editing == null,
-                        modifier = Modifier.fillMaxWidth()
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = MaterialTheme.shapes.medium
                     )
-                    Spacer(Modifier.height(6.dp))
                     OutlinedTextField(
                         value = state.password,
                         onValueChange = viewModel::setPassword,
-                        label = { Text(if (state.editing == null) "Password" else "Password baru (kosongkan jika tidak diubah)") },
+                        label = {
+                            Text(
+                                if (state.editing == null) "Password"
+                                else "Password baru (kosongkan jika tidak diubah)"
+                            )
+                        },
                         singleLine = true,
                         visualTransformation = PasswordVisualTransformation(),
-                        modifier = Modifier.fillMaxWidth()
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = MaterialTheme.shapes.medium
                     )
-                    Spacer(Modifier.height(6.dp))
                     OutlinedTextField(
                         value = state.name,
                         onValueChange = viewModel::setName,
                         label = { Text("Nama lengkap") },
                         singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = MaterialTheme.shapes.medium
                     )
-                    Spacer(Modifier.height(8.dp))
+                    Spacer(Modifier.height(2.dp))
+                    Text("Peran", style = MaterialTheme.typography.labelLarge)
                     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         UserRole.entries.forEach { r ->
                             FilterChip(
@@ -128,15 +174,13 @@ fun UsersScreen(
                         }
                     }
                     if (state.editing != null) {
-                        Spacer(Modifier.height(8.dp))
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Text("Aktif", modifier = Modifier.weight(1f))
                             Switch(checked = state.active, onCheckedChange = viewModel::setActive)
                         }
                     }
                     if (!state.error.isNullOrBlank()) {
-                        Spacer(Modifier.height(4.dp))
-                        Text(state.error.orEmpty(), color = MaterialTheme.colorScheme.error)
+                        Text(state.error.orEmpty(), color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
                     }
                 }
             },

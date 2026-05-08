@@ -6,16 +6,19 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Bluetooth
+import androidx.compose.material.icons.filled.BluetoothDisabled
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -37,7 +40,14 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.posan.app.ui.components.EmptyState
+import com.posan.app.ui.components.IconBadge
+import com.posan.app.ui.components.ListItemCard
 import com.posan.app.ui.components.SimpleAppBar
+import com.posan.app.ui.components.StatusPill
+import com.posan.app.ui.theme.Brand500
+import com.posan.app.ui.theme.Danger500
+import com.posan.app.ui.theme.Success500
+import com.posan.app.ui.theme.Warning500
 
 @Composable
 fun PrinterDeviceScreen(
@@ -74,6 +84,7 @@ fun PrinterDeviceScreen(
         topBar = {
             SimpleAppBar(
                 title = "Printer Bluetooth",
+                subtitle = "Pilih perangkat untuk cetak struk",
                 onBack = onBack,
                 actions = {
                     IconButton(onClick = { viewModel.refresh() }) {
@@ -83,59 +94,117 @@ fun PrinterDeviceScreen(
             )
         }
     ) { padding ->
-        Column(modifier = Modifier.fillMaxSize().padding(padding).padding(16.dp)) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding)
+                .padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
             if (!state.bluetoothEnabled) {
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)
-                ) {
-                    Column(modifier = Modifier.padding(12.dp)) {
-                        Text("Bluetooth nonaktif", fontWeight = FontWeight.SemiBold)
-                        Text("Aktifkan Bluetooth pada perangkat untuk menampilkan daftar printer.", style = MaterialTheme.typography.bodySmall)
-                    }
-                }
-                Spacer(Modifier.height(8.dp))
+                NoticeCard(
+                    icon = Icons.Default.BluetoothDisabled,
+                    title = "Bluetooth nonaktif",
+                    message = "Aktifkan Bluetooth pada perangkat untuk menampilkan daftar printer",
+                    tint = Danger500
+                )
             }
             if (state.needPermission) {
-                Card(modifier = Modifier.fillMaxWidth()) {
-                    Column(modifier = Modifier.padding(12.dp)) {
-                        Text("Izin Bluetooth diperlukan", fontWeight = FontWeight.SemiBold)
-                        Text("Berikan izin untuk memindai dan menghubungkan ke printer.", style = MaterialTheme.typography.bodySmall)
-                        Spacer(Modifier.height(6.dp))
-                        Button(onClick = {
-                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                                permLauncher.launch(arrayOf(Manifest.permission.BLUETOOTH_CONNECT, Manifest.permission.BLUETOOTH_SCAN))
-                            }
-                        }) { Text("Berikan izin") }
-                    }
-                }
-                Spacer(Modifier.height(8.dp))
-            }
-            Text("Pilih dari perangkat yang sudah dipair", style = MaterialTheme.typography.bodyMedium)
-            Spacer(Modifier.height(8.dp))
-            if (state.devices.isEmpty()) {
-                EmptyState(title = "Tidak ada perangkat", subtitle = "Pair printer di pengaturan Bluetooth lalu tekan refresh", icon = Icons.Default.Bluetooth)
-            } else {
-                LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxSize()) {
-                    items(state.devices, key = { it.address }) { device ->
-                        Card(modifier = Modifier.fillMaxWidth()) {
-                            Row(modifier = Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                                Icon(Icons.Default.Bluetooth, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                                Spacer(Modifier.padding(end = 8.dp))
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(device.name, fontWeight = FontWeight.Medium)
-                                    Text(device.address, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                    if (state.selectedAddress == device.address) {
-                                        Text("Dipilih", color = MaterialTheme.colorScheme.tertiary, style = MaterialTheme.typography.bodySmall)
-                                    }
-                                }
-                                OutlinedButton(onClick = { viewModel.testPrint(device) }, enabled = !state.testing) { Text("Test") }
-                                Spacer(Modifier.padding(end = 4.dp))
-                                Button(onClick = { viewModel.choose(device) }) { Text("Pilih") }
-                            }
+                NoticeCard(
+                    icon = Icons.Default.Bluetooth,
+                    title = "Izin Bluetooth diperlukan",
+                    message = "Berikan izin agar aplikasi dapat memindai dan menyambungkan printer",
+                    tint = Warning500,
+                    action = "Berikan izin",
+                    onAction = {
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                            permLauncher.launch(
+                                arrayOf(
+                                    Manifest.permission.BLUETOOTH_CONNECT,
+                                    Manifest.permission.BLUETOOTH_SCAN
+                                )
+                            )
                         }
                     }
+                )
+            }
+            if (state.devices.isEmpty()) {
+                EmptyState(
+                    title = "Belum ada perangkat dipair",
+                    subtitle = "Pair printer di pengaturan Bluetooth lalu tekan Refresh",
+                    icon = Icons.Default.Bluetooth
+                )
+            } else {
+                Text(
+                    "Perangkat ter-pair (${state.devices.size})",
+                    style = MaterialTheme.typography.titleSmall,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                LazyColumn(
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                    contentPadding = PaddingValues(bottom = 12.dp),
+                    modifier = Modifier.fillMaxSize()
+                ) {
+                    items(state.devices, key = { it.address }) { device ->
+                        val isSelected = state.selectedAddress == device.address
+                        ListItemCard(
+                            leading = { IconBadge(icon = Icons.Default.Bluetooth, tint = Brand500) },
+                            title = device.name,
+                            subtitle = device.address,
+                            extra = if (isSelected) {
+                                {
+                                    StatusPill(label = "Dipilih", color = Success500)
+                                }
+                            } else null,
+                            trailing = {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    OutlinedButton(
+                                        onClick = { viewModel.testPrint(device) },
+                                        enabled = !state.testing
+                                    ) { Text("Test") }
+                                    Spacer(Modifier.width(6.dp))
+                                    Button(onClick = { viewModel.choose(device) }) { Text("Pilih") }
+                                }
+                            }
+                        )
+                    }
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun NoticeCard(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    title: String,
+    message: String,
+    tint: androidx.compose.ui.graphics.Color,
+    action: String? = null,
+    onAction: (() -> Unit)? = null
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+        border = androidx.compose.foundation.BorderStroke(1.dp, tint.copy(alpha = 0.4f))
+    ) {
+        Row(
+            modifier = Modifier.padding(14.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            IconBadge(icon = icon, tint = tint)
+            Spacer(Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                Text(
+                    message,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            if (action != null && onAction != null) {
+                Button(onClick = onAction) { Text(action) }
             }
         }
     }

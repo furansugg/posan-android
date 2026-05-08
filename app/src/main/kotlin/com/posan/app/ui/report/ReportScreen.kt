@@ -1,5 +1,6 @@
 package com.posan.app.ui.report
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -9,14 +10,18 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.background
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AccountBalanceWallet
 import androidx.compose.material.icons.filled.CalendarToday
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
+import androidx.compose.material.icons.filled.CreditCard
+import androidx.compose.material.icons.filled.Payments
+import androidx.compose.material.icons.filled.QrCode2
+import androidx.compose.material.icons.filled.Receipt
+import androidx.compose.material.icons.filled.TrendingUp
 import androidx.compose.material3.DatePicker
 import androidx.compose.material3.DatePickerDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -33,13 +38,23 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
+import com.posan.app.ui.components.IconBadge
+import com.posan.app.ui.components.OutlinedSurfaceCard
+import com.posan.app.ui.components.SectionHeader
 import com.posan.app.ui.components.SimpleAppBar
+import com.posan.app.ui.theme.Brand500
+import com.posan.app.ui.theme.Brand700
+import com.posan.app.ui.theme.CatBlue
+import com.posan.app.ui.theme.CatGreen
+import com.posan.app.ui.theme.CatOrange
 import com.posan.app.util.Format
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -55,6 +70,7 @@ fun ReportScreen(
         topBar = {
             SimpleAppBar(
                 title = "Laporan Harian",
+                subtitle = Format.date(state.date),
                 onBack = onBack,
                 actions = {
                     IconButton(onClick = { showPicker = true }) {
@@ -64,48 +80,153 @@ fun ReportScreen(
             )
         }
     ) { padding ->
-        Column(modifier = Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()).padding(16.dp)) {
-            Text("Tanggal: ${Format.date(state.date)}", fontWeight = FontWeight.Medium)
-            Spacer(Modifier.height(12.dp))
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding)
+                .verticalScroll(rememberScrollState())
+        ) {
             val report = state.report
             if (report == null) {
-                Text("Memuat...")
+                Box(modifier = Modifier.fillMaxSize().padding(40.dp), contentAlignment = Alignment.Center) {
+                    Text("Memuat...", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
             } else {
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primary)
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(Brush.verticalGradient(listOf(Brand700, Brand500)))
                 ) {
-                    Column(modifier = Modifier.padding(16.dp)) {
-                        Text("Total Pendapatan", color = MaterialTheme.colorScheme.onPrimary, style = MaterialTheme.typography.bodyMedium)
+                    Column(modifier = Modifier.padding(20.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Box(
+                                modifier = Modifier
+                                    .size(40.dp)
+                                    .clip(MaterialTheme.shapes.small)
+                                    .background(Color.White.copy(alpha = 0.22f)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    Icons.Default.TrendingUp,
+                                    contentDescription = null,
+                                    tint = Color.White
+                                )
+                            }
+                            Spacer(Modifier.width(10.dp))
+                            Text(
+                                "Total Pendapatan",
+                                color = Color.White.copy(alpha = 0.9f),
+                                style = MaterialTheme.typography.labelLarge
+                            )
+                        }
+                        Spacer(Modifier.height(10.dp))
                         Text(
-                            Format.money(report.totalRevenue),
-                            color = MaterialTheme.colorScheme.onPrimary,
+                            text = Format.money(report.totalRevenue),
+                            color = Color.White,
                             fontWeight = FontWeight.Bold,
-                            style = MaterialTheme.typography.headlineSmall
+                            style = MaterialTheme.typography.displaySmall
                         )
-                        Text("${report.transactionCount} transaksi", color = MaterialTheme.colorScheme.onPrimary, style = MaterialTheme.typography.bodySmall)
+                        Text(
+                            text = "${report.transactionCount} transaksi",
+                            color = Color.White.copy(alpha = 0.85f),
+                            style = MaterialTheme.typography.bodyMedium
+                        )
                     }
                 }
-                Spacer(Modifier.height(12.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    StatCard("Tunai", Format.money(report.cashRevenue), Color(0xFF20C997), modifier = Modifier.weight(1f))
-                    StatCard("QRIS", Format.money(report.qrisRevenue), Color(0xFF6610F2), modifier = Modifier.weight(1f))
-                    StatCard("Kartu", Format.money(report.cardRevenue), Color(0xFFFD7E14), modifier = Modifier.weight(1f))
-                }
-                Spacer(Modifier.height(16.dp))
-                Text("Transaksi", fontWeight = FontWeight.SemiBold)
-                Spacer(Modifier.height(6.dp))
-                if (state.transactions.isEmpty()) {
-                    Text("Belum ada transaksi pada tanggal ini", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                } else {
-                    state.transactions.forEach { tx ->
-                        Row(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
-                            Text(tx.code, modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
-                            Text(Format.timeOnly(tx.createdAt), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            Spacer(Modifier.width(8.dp))
-                            Text(Format.money(tx.total), fontWeight = FontWeight.Medium)
+
+                Column(
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    SectionHeader(title = "Per Metode Pembayaran")
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        PaymentStat(
+                            label = "Tunai",
+                            value = Format.money(report.cashRevenue),
+                            tint = CatGreen,
+                            icon = Icons.Default.Payments,
+                            modifier = Modifier.weight(1f)
+                        )
+                        PaymentStat(
+                            label = "QRIS",
+                            value = Format.money(report.qrisRevenue),
+                            tint = CatBlue,
+                            icon = Icons.Default.QrCode2,
+                            modifier = Modifier.weight(1f)
+                        )
+                        PaymentStat(
+                            label = "Kartu",
+                            value = Format.money(report.cardRevenue),
+                            tint = CatOrange,
+                            icon = Icons.Default.CreditCard,
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+
+                    SectionHeader(title = "Transaksi", subtitle = "${state.transactions.size} entri")
+                    if (state.transactions.isEmpty()) {
+                        OutlinedSurfaceCard {
+                            Column(modifier = Modifier.padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                                Icon(
+                                    Icons.Default.AccountBalanceWallet,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.size(36.dp)
+                                )
+                                Spacer(Modifier.height(8.dp))
+                                Text(
+                                    "Belum ada transaksi pada tanggal ini",
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    style = MaterialTheme.typography.bodyMedium
+                                )
+                            }
+                        }
+                    } else {
+                        OutlinedSurfaceCard {
+                            Column {
+                                state.transactions.forEachIndexed { index, tx ->
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(horizontal = 14.dp, vertical = 10.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        IconBadge(
+                                            icon = Icons.Default.Receipt,
+                                            tint = MaterialTheme.colorScheme.primary,
+                                            boxSize = 32.dp,
+                                            iconSize = 16.dp
+                                        )
+                                        Spacer(Modifier.width(10.dp))
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text(
+                                                tx.code,
+                                                style = MaterialTheme.typography.titleSmall,
+                                                fontWeight = FontWeight.Medium
+                                            )
+                                            Text(
+                                                Format.timeOnly(tx.createdAt),
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
+                                        Text(
+                                            Format.money(tx.total),
+                                            style = MaterialTheme.typography.titleSmall,
+                                            fontWeight = FontWeight.SemiBold,
+                                            color = MaterialTheme.colorScheme.primary
+                                        )
+                                    }
+                                    if (index < state.transactions.lastIndex) {
+                                        androidx.compose.material3.HorizontalDivider(
+                                            color = MaterialTheme.colorScheme.outlineVariant
+                                        )
+                                    }
+                                }
+                            }
                         }
                     }
+                    Spacer(Modifier.height(8.dp))
                 }
             }
         }
@@ -127,19 +248,24 @@ fun ReportScreen(
 }
 
 @Composable
-private fun StatCard(label: String, value: String, tint: Color, modifier: Modifier = Modifier) {
-    Card(modifier = modifier) {
+private fun PaymentStat(
+    label: String,
+    value: String,
+    tint: Color,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    modifier: Modifier = Modifier
+) {
+    OutlinedSurfaceCard(modifier = modifier) {
         Column(modifier = Modifier.padding(12.dp)) {
-            Box(
-                modifier = Modifier
-                    .height(4.dp)
-                    .fillMaxWidth()
-                    .clip(MaterialTheme.shapes.small)
-                    .background(tint)
-            )
+            IconBadge(icon = icon, tint = tint, boxSize = 32.dp, iconSize = 16.dp)
             Spacer(Modifier.height(8.dp))
-            Text(label, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Text(value, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodyMedium)
+            Text(label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(
+                value,
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onSurface
+            )
         }
     }
 }
