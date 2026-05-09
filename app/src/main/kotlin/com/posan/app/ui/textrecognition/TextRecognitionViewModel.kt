@@ -79,8 +79,24 @@ class TextRecognitionViewModel @Inject constructor() : ViewModel() {
             "customer" -> receipt.copy(customer = value)
             "paymentMethod" -> receipt.copy(paymentMethod = value)
             "footer" -> receipt.copy(footer = value)
+            "receiptTitle" -> receipt.copy(receiptTitle = value)
             else -> receipt
         }
+        _state.value = _state.value.copy(
+            parsedReceipt = updated,
+            formattedReceipt = ReceiptFormatter.format(updated)
+        )
+    }
+
+    fun updateExtraField(key: String, value: String) {
+        val receipt = _state.value.parsedReceipt ?: return
+        val newExtra = receipt.extraFields.toMutableMap()
+        if (value.isBlank()) {
+            newExtra.remove(key)
+        } else {
+            newExtra[key] = value
+        }
+        val updated = receipt.copy(extraFields = newExtra)
         _state.value = _state.value.copy(
             parsedReceipt = updated,
             formattedReceipt = ReceiptFormatter.format(updated)

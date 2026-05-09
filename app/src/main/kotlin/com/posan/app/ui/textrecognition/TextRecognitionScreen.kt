@@ -350,7 +350,6 @@ private fun ReceiptEditForm(
             value = receipt.storeAddress,
             onValueChange = { viewModel.updateParsedField("storeAddress", it) },
             label = { Text("Alamat") },
-            singleLine = true,
             modifier = Modifier.fillMaxWidth(),
             shape = MaterialTheme.shapes.medium
         )
@@ -362,13 +361,21 @@ private fun ReceiptEditForm(
             modifier = Modifier.fillMaxWidth(),
             shape = MaterialTheme.shapes.medium
         )
+        OutlinedTextField(
+            value = receipt.receiptTitle,
+            onValueChange = { viewModel.updateParsedField("receiptTitle", it) },
+            label = { Text("Judul Struk") },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+            shape = MaterialTheme.shapes.medium
+        )
     }
 
     FormSection(title = "Info Transaksi", subtitle = "Detail transaksi") {
         OutlinedTextField(
             value = receipt.transactionCode,
             onValueChange = { viewModel.updateParsedField("transactionCode", it) },
-            label = { Text("No. Transaksi") },
+            label = { Text("No. Pesanan") },
             singleLine = true,
             modifier = Modifier.fillMaxWidth(),
             shape = MaterialTheme.shapes.medium
@@ -384,7 +391,7 @@ private fun ReceiptEditForm(
         OutlinedTextField(
             value = receipt.cashier,
             onValueChange = { viewModel.updateParsedField("cashier", it) },
-            label = { Text("Kasir") },
+            label = { Text("Kasir/Staf") },
             singleLine = true,
             modifier = Modifier.fillMaxWidth(),
             shape = MaterialTheme.shapes.medium
@@ -399,9 +406,24 @@ private fun ReceiptEditForm(
         )
     }
 
+    if (receipt.extraFields.isNotEmpty()) {
+        FormSection(title = "Detail Tambahan", subtitle = "Data khusus yang terdeteksi") {
+            receipt.extraFields.forEach { (key, value) ->
+                OutlinedTextField(
+                    value = value,
+                    onValueChange = { viewModel.updateExtraField(key, it) },
+                    label = { Text(key) },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = MaterialTheme.shapes.medium
+                )
+            }
+        }
+    }
+
     if (receipt.items.isNotEmpty()) {
         FormSection(title = "Item (${receipt.items.size})", subtitle = "Daftar item terdeteksi") {
-            receipt.items.forEachIndexed { idx, item ->
+            receipt.items.forEach { item ->
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween
