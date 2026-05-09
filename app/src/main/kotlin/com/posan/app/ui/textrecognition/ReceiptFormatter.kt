@@ -66,7 +66,7 @@ object ReceiptFormatter {
             sb.appendLine("-".repeat(width))
         }
 
-        val feeKeys = listOf("Admin", "PPN", "PPJ", "Meterai", "Angsuran")
+        val feeKeys = listOf("Stroom/Token", "Admin", "PPN", "PPJ", "Meterai", "Angsuran")
         for (key in feeKeys) {
             val value = extra[key] ?: continue
             sb.appendLine(twoColumn(key, value, width))

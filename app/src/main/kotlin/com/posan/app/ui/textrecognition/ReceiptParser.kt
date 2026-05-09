@@ -28,98 +28,140 @@ data class ParsedReceipt(
     val receiptTitle: String = ""
 )
 
+/**
+ * Receipt parser that handles two-column OCR output.
+ *
+ * OCR on two-column receipts reads the left column (labels) top-to-bottom
+ * first, then the right column (values) top-to-bottom, producing output
+ * where all labels appear before all values.
+ *
+ * Strategy:
+ * 1. Extract inline values (lines with "Label: Value"), skip label-only lines
+ * 2. Search entire text for unique-pattern values (dates, tokens, IDs)
+ * 3. Find total amount separately (last/largest Rp value)
+ * 4. Match remaining amount labels to amount values by positional order
+ * 5. Find kWh after amounts are consumed (to avoid kWh/amount confusion)
+ */
 object ReceiptParser {
 
-    private val PRICE_PATTERN = Regex("""[Rr][Pp]\.?\s*[\d.,]+""")
-    private val AMOUNT_PATTERN = Regex("""[Rr][Pp]\.?\s*[\d.,]+|[\d.,]+[.,]\d{3}""")
-    private val NUMBER_PATTERN = Regex("""[\d.,]+""")
+    private val AMOUNT_PATTERN = Regex("""[Rr][Pp]\.?\s*[\d.,]+""")
+    // Bare amounts must have comma + exactly 2 decimal digits (like "0,00")
+    // This excludes bare integers (like "1422") and kWh values (like "30,8")
+    private val BARE_AMOUNT_PATTERN = Regex("""^\d[\d.]*[,]\d{2}$""")
     private val QTY_PRICE_PATTERN = Regex("""(\d+)\s*[xX×]\s*[Rr]?[Pp]?\.?\s*([\d.,]+)""")
     private val DATE_TIME_PATTERN = Regex("""\d{1,2}[/\-]\d{1,2}[/\-]\d{2,4}\s+\d{1,2}[:.]\d{2}(?:[:.]\d{2})?""")
     private val DATE_PATTERN = Regex("""\d{1,2}[/\-]\d{1,2}[/\-]\d{2,4}""")
     private val TIME_PATTERN = Regex("""\d{1,2}[:.]\d{2}(?:[:.]\d{2})?""")
     private val TOKEN_PATTERN = Regex("""\d{4}[-\s]\d{4}[-\s]\d{4}[-\s]\d{2,4}""")
-    private val METER_ID_PATTERN = Regex("""\d{11,13}""")
+    private val ORDER_NO_PATTERN = Regex("""[A-Z]{2,5}\d{5,}""")
+    private val TARIF_DAYA_PATTERN = Regex("""R\d[/\\]\d+\s*VA""", RegexOption.IGNORE_CASE)
+    private val REF_NO_PATTERN = Regex("""^[A-Z0-9]{10,}\s*[A-Z0-9]*$""")
+    private val ALLCAPS_NAME_PATTERN = Regex("""^[A-Z\s]{3,}$""")
+    private val PHONE_PATTERN = Regex("""(?:Telp|Tel|HP|Phone|Tlp)[.:)}\s]*\s*([\d\s\-+()]+)""", RegexOption.IGNORE_CASE)
+    private val KWH_PATTERN = Regex("""^\d+[.,]\d{1}$""")
 
-    private data class LabelDef(
-        val key: String,
-        val patterns: List<String>,
-        val valueType: ValueType = ValueType.TEXT
+    private val LABEL_PATTERNS = mapOf(
+        "storeName" to listOf("nama mitra", "nama toko", "merchant"),
+        "storeAddress" to listOf("alamat mitra", "alamat toko", "alamat"),
+        "receiptTitle" to listOf("struk pembayaran", "bukti pembayaran", "receipt"),
+        "dateTime" to listOf("waktu dibuat", "tanggal", "tgl", "date", "waktu"),
+        "username" to listOf("username", "user name"),
+        "staff" to listOf("staf", "staff", "kasir", "cashier"),
+        "orderNo" to listOf("no. pesanan", "no pesanan", "no order", "order no"),
+        "meterNo" to listOf("meter no", "no meter", "no. meter"),
+        "idpel" to listOf("idpel", "id pel", "id pelanggan"),
+        "customerName" to listOf("nama pelanggan", "pelanggan", "customer"),
+        "name" to listOf("nama"),
+        "tarifDaya" to listOf("tarif daya", "tarif/daya"),
+        "noRef" to listOf("no. ref", "no ref", "ref no", "referensi"),
+        "token" to listOf("stroom/token", "token listrik", "stroom", "token"),
+        "jumlahKwh" to listOf("jumlah kwh", "jml kwh")
     )
 
-    private enum class ValueType { TEXT, AMOUNT, DATE, TOKEN }
-
-    private val KNOWN_LABELS = listOf(
-        LabelDef("storeName", listOf("nama mitra", "nama toko", "merchant"), ValueType.TEXT),
-        LabelDef("storeAddress", listOf("alamat mitra", "alamat toko", "alamat"), ValueType.TEXT),
-        LabelDef("receiptTitle", listOf("struk pembayaran", "bukti pembayaran", "receipt"), ValueType.TEXT),
-        LabelDef("dateTime", listOf("waktu dibuat", "tanggal", "tgl", "date", "waktu"), ValueType.DATE),
-        LabelDef("username", listOf("username", "user name"), ValueType.TEXT),
-        LabelDef("staff", listOf("staf", "staff", "kasir", "cashier"), ValueType.TEXT),
-        LabelDef("orderNo", listOf("no. pesanan", "no pesanan", "no order", "order no"), ValueType.TEXT),
-        LabelDef("meterNo", listOf("meter no", "no meter", "no. meter"), ValueType.TEXT),
-        LabelDef("idpel", listOf("idpel", "id pel", "id pelanggan"), ValueType.TEXT),
-        LabelDef("customerName", listOf("nama pelanggan", "pelanggan", "customer"), ValueType.TEXT),
-        LabelDef("name", listOf("^nama$"), ValueType.TEXT),
-        LabelDef("tarifDaya", listOf("tarif daya", "tarif/daya", "daya"), ValueType.TEXT),
-        LabelDef("noRef", listOf("no. ref", "no ref", "ref no", "referensi"), ValueType.TEXT),
-        LabelDef("meterai", listOf("meterai", "materai"), ValueType.AMOUNT),
-        LabelDef("ppn", listOf("^ppn$"), ValueType.AMOUNT),
-        LabelDef("ppj", listOf("^ppj$"), ValueType.AMOUNT),
-        LabelDef("angsuran", listOf("angsuran", "installment"), ValueType.AMOUNT),
-        LabelDef("jumlahKwh", listOf("jumlah kwh", "kwh", "jml kwh"), ValueType.TEXT),
-        LabelDef("token", listOf("stroom/token", "token listrik", "stroom", "token"), ValueType.TOKEN),
-        LabelDef("admin", listOf("admin", "biaya admin"), ValueType.AMOUNT),
-        LabelDef("total", listOf("total tagihan", "total bayar", "grand total", "^total$"), ValueType.AMOUNT),
-        LabelDef("tagihan", listOf("^tagihan$"), ValueType.AMOUNT),
-        LabelDef("subtotal", listOf("subtotal", "sub total"), ValueType.AMOUNT),
-        LabelDef("discount", listOf("diskon", "discount", "disc"), ValueType.AMOUNT),
-        LabelDef("tax", listOf("pajak", "tax"), ValueType.AMOUNT),
-        LabelDef("paymentMethod", listOf("metode bayar", "pembayaran", "payment method"), ValueType.TEXT),
-        LabelDef("paid", listOf("bayar", "tunai", "cash", "paid"), ValueType.AMOUNT),
-        LabelDef("change", listOf("kembali", "kembalian", "change"), ValueType.AMOUNT)
+    private val AMOUNT_LABELS = listOf(
+        "meterai" to listOf("meterai", "materai"),
+        "ppn" to listOf("ppn"),
+        "ppj" to listOf("ppj"),
+        "angsuran" to listOf("angsuran", "installment"),
+        "stroom" to listOf("stroom/token", "stroom", "token"),
+        "admin" to listOf("admin", "biaya admin"),
+        "subtotal" to listOf("subtotal", "sub total"),
+        "discount" to listOf("diskon", "discount", "disc"),
+        "tax" to listOf("pajak", "tax"),
+        "paid" to listOf("bayar", "tunai", "cash", "paid"),
+        "change" to listOf("kembali", "kembalian", "change")
     )
+
+    private val TOTAL_PATTERNS = listOf("total tagihan", "total bayar", "grand total", "total", "tagihan")
+
+    private val FOOTER_TRIGGERS = listOf("informasi", "hubungi", "call center", "simpan struk",
+        "terima kasih", "thank", "bukti pembayaran", "hub pln")
+
+    /**
+     * Collect all label pattern strings for exact-match checks.
+     */
+    private val ALL_LABEL_STRINGS: Set<String> by lazy {
+        val set = mutableSetOf<String>()
+        for ((_, patterns) in LABEL_PATTERNS) set.addAll(patterns)
+        for ((_, patterns) in AMOUNT_LABELS) set.addAll(patterns)
+        set.addAll(TOTAL_PATTERNS)
+        set
+    }
 
     fun parse(rawText: String): ParsedReceipt {
         val lines = rawText.lines().map { it.trim() }.filter { it.isNotBlank() }
         if (lines.isEmpty()) return ParsedReceipt()
 
-        val labelValueMap = extractByLabelValueMatching(lines)
+        val consumed = mutableSetOf<Int>()
+        val result = mutableMapOf<String, String>()
 
-        val storeName = labelValueMap["storeName"] ?: ""
-        val storeAddress = labelValueMap["storeAddress"] ?: extractAddressFromHeader(lines)
-        val receiptTitle = labelValueMap["receiptTitle"] ?: detectReceiptTitle(lines)
-        val dateTime = labelValueMap["dateTime"] ?: findDateTime(lines)
-        val staff = labelValueMap["staff"] ?: ""
-        val orderNo = labelValueMap["orderNo"] ?: ""
-        val meterNo = labelValueMap["meterNo"] ?: ""
-        val idpel = labelValueMap["idpel"] ?: ""
-        val customerName = labelValueMap["customerName"]
-            ?: labelValueMap["name"]
-            ?: ""
-        val tarifDaya = labelValueMap["tarifDaya"] ?: ""
-        val noRef = labelValueMap["noRef"] ?: ""
-        val tokenValue = labelValueMap["token"] ?: findToken(lines)
+        // Phase 1: Extract inline "Label: Value" pairs (skip label-only lines)
+        extractInlineValues(lines, result, consumed)
 
-        val ppn = parseAmountStr(labelValueMap["ppn"])
-        val ppj = parseAmountStr(labelValueMap["ppj"])
-        val meterai = parseAmountStr(labelValueMap["meterai"])
-        val angsuran = parseAmountStr(labelValueMap["angsuran"])
-        val adminFee = parseAmountStr(labelValueMap["admin"])
-        val kwh = labelValueMap["jumlahKwh"] ?: ""
+        // Phase 2: Search entire text for unique-pattern values
+        findByPattern(lines, result, consumed)
 
-        val totalStr = labelValueMap["total"] ?: labelValueMap["tagihan"] ?: ""
-        val total = parseAmountStr(totalStr)
-        val subtotalVal = parseAmountStr(labelValueMap["subtotal"])
-        val discount = parseAmountStr(labelValueMap["discount"])
-        val tax = parseAmountStr(labelValueMap["tax"])
-        val paid = parseAmountStr(labelValueMap["paid"])
-        val change = parseAmountStr(labelValueMap["change"])
+        // Phase 3: Find total amount (last Rp value heuristic)
+        findTotalAmount(lines, result, consumed)
+
+        // Phase 4: Match remaining amount labels to values by positional order
+        matchAmountsPositionally(lines, result, consumed)
+
+        // Phase 5: Find kWh after amounts are consumed
+        findKwh(lines, result, consumed)
+
+        // Build result
+        val storeName = result["storeName"] ?: ""
+        val storeAddress = result["storeAddress"] ?: extractAddressFromHeader(lines)
+        val receiptTitle = result["receiptTitle"] ?: detectReceiptTitle(lines)
+        val dateTime = result["dateTime"] ?: ""
+        val staff = result["staff"] ?: ""
+        val orderNo = result["orderNo"] ?: ""
+        val meterNo = result["meterNo"] ?: ""
+        val idpel = result["idpel"] ?: ""
+        val customerName = result["customerName"] ?: result["name"] ?: ""
+        val tarifDaya = result["tarifDaya"] ?: ""
+        val noRef = result["noRef"] ?: ""
+        val tokenValue = result["token"] ?: ""
+        val kwh = result["jumlahKwh"] ?: ""
+
+        val ppn = parseAmountStr(result["ppn"])
+        val ppj = parseAmountStr(result["ppj"])
+        val meterai = parseAmountStr(result["meterai"])
+        val angsuran = parseAmountStr(result["angsuran"])
+        val adminFee = parseAmountStr(result["admin"])
+        val stroomAmount = parseAmountStr(result["stroom"])
+        val totalVal = parseAmountStr(result["total"] ?: result["tagihan"])
+        val subtotalVal = parseAmountStr(result["subtotal"])
+        val discount = parseAmountStr(result["discount"])
+        val tax = parseAmountStr(result["tax"])
+        val paid = parseAmountStr(result["paid"])
+        val change = parseAmountStr(result["change"])
 
         val items = extractItems(lines)
-
         val footer = extractFooterText(lines)
 
-        val extra = mutableMapOf<String, String>()
+        val extra = linkedMapOf<String, String>()
         if (orderNo.isNotBlank()) extra["No. Pesanan"] = orderNo
         if (meterNo.isNotBlank()) extra["Meter No"] = meterNo
         if (idpel.isNotBlank()) extra["IDPEL"] = idpel
@@ -127,6 +169,7 @@ object ReceiptParser {
         if (noRef.isNotBlank()) extra["No. Ref"] = noRef
         if (tokenValue.isNotBlank()) extra["Token"] = tokenValue
         if (kwh.isNotBlank()) extra["Jumlah kWh"] = kwh
+        if (stroomAmount > 0) extra["Stroom/Token"] = formatRp(stroomAmount)
         if (ppn > 0) extra["PPN"] = formatRp(ppn)
         if (ppj > 0) extra["PPJ"] = formatRp(ppj)
         if (meterai > 0) extra["Meterai"] = formatRp(meterai)
@@ -136,7 +179,7 @@ object ReceiptParser {
         val computedSubtotal = if (subtotalVal > 0) subtotalVal
             else if (items.isNotEmpty()) items.sumOf { it.subtotal }
             else 0.0
-        val computedTotal = if (total > 0) total
+        val computedTotal = if (totalVal > 0) totalVal
             else if (computedSubtotal > 0) computedSubtotal - discount + tax
             else 0.0
 
@@ -161,148 +204,317 @@ object ReceiptParser {
         )
     }
 
-    private fun extractByLabelValueMatching(lines: List<String>): Map<String, String> {
-        val result = mutableMapOf<String, String>()
-        val usedLines = mutableSetOf<Int>()
+    /**
+     * Check if a line exactly matches any known label pattern.
+     * Used to prevent extracting part of a label as a value
+     * (e.g. "Waktu Dibuat" matching "waktu" and extracting "Dibuat").
+     */
+    private fun isExactLabelMatch(line: String): Boolean {
+        val lower = line.lowercase().trim().removeSuffix(":")
+        return ALL_LABEL_STRINGS.any { pattern -> lower == pattern }
+    }
 
+    /**
+     * Phase 1: Find lines that contain "label: value" inline.
+     * IMPORTANT: Skip lines where the entire text is a known label
+     * (to prevent "Waktu Dibuat" from extracting "Dibuat" as a value
+     * when "waktu" is a shorter pattern match).
+     */
+    private fun extractInlineValues(
+        lines: List<String>,
+        result: MutableMap<String, String>,
+        consumed: MutableSet<Int>
+    ) {
         for (i in lines.indices) {
             val line = lines[i]
-            for (labelDef in KNOWN_LABELS) {
-                if (result.containsKey(labelDef.key)) continue
-                val matchedLabel = labelDef.patterns.any { pattern ->
-                    if (pattern.startsWith("^") && pattern.endsWith("$")) {
-                        line.lowercase().trim() == pattern.removePrefix("^").removeSuffix("$")
-                    } else {
-                        line.lowercase().contains(pattern)
+            if (isExactLabelMatch(line)) continue
+
+            for ((key, patterns) in LABEL_PATTERNS) {
+                if (result.containsKey(key)) continue
+                // Try longest patterns first to avoid partial matches
+                val sortedPatterns = patterns.sortedByDescending { it.length }
+                for (pattern in sortedPatterns) {
+                    val idx = line.lowercase().indexOf(pattern)
+                    if (idx < 0) continue
+                    val afterLabel = line.substring(idx + pattern.length)
+                        .trimStart(':', ' ', '\t')
+                    if (afterLabel.isNotBlank() && afterLabel.length > 1) {
+                        result[key] = afterLabel
+                        consumed.add(i)
+                        break
                     }
                 }
-                if (!matchedLabel) continue
+                if (result.containsKey(key)) break
+            }
+        }
+    }
 
-                val inlineValue = extractInlineValue(line, labelDef)
-                if (inlineValue != null && inlineValue.isNotBlank()) {
-                    result[labelDef.key] = inlineValue
-                    usedLines.add(i)
+    /**
+     * Phase 2: Search ENTIRE text for values with unique patterns.
+     * Each field has a specific regex/heuristic to find its value anywhere.
+     */
+    private fun findByPattern(
+        lines: List<String>,
+        result: MutableMap<String, String>,
+        consumed: MutableSet<Int>
+    ) {
+        // DateTime: find DD/MM/YYYY HH:MM:SS pattern
+        if (!result.containsKey("dateTime")) {
+            for (i in lines.indices) {
+                if (consumed.contains(i)) continue
+                val dtMatch = DATE_TIME_PATTERN.find(lines[i])
+                if (dtMatch != null) {
+                    result["dateTime"] = dtMatch.value
+                    consumed.add(i)
+                    break
+                }
+            }
+            if (!result.containsKey("dateTime")) {
+                for (i in lines.indices) {
+                    if (consumed.contains(i)) continue
+                    val dateMatch = DATE_PATTERN.find(lines[i])
+                    if (dateMatch != null) {
+                        val timeMatch = TIME_PATTERN.find(lines[i])
+                        result["dateTime"] = "${dateMatch.value} ${timeMatch?.value ?: ""}".trim()
+                        consumed.add(i)
+                        break
+                    }
                 }
             }
         }
 
-        val labelOnlyLines = mutableListOf<Pair<Int, LabelDef>>()
-        for (i in lines.indices) {
-            if (usedLines.contains(i)) continue
-            val line = lines[i]
-            for (labelDef in KNOWN_LABELS) {
-                if (result.containsKey(labelDef.key)) continue
-                val isLabelOnly = labelDef.patterns.any { pattern ->
-                    val p = pattern.removePrefix("^").removeSuffix("$")
-                    line.lowercase().trim() == p || line.lowercase().trim().removeSuffix(":") == p
-                }
-                if (isLabelOnly) {
-                    labelOnlyLines.add(Pair(i, labelDef))
-                    usedLines.add(i)
+        // Token: find XXXX-XXXX-XXXX-XX pattern
+        if (!result.containsKey("token")) {
+            for (i in lines.indices) {
+                if (consumed.contains(i)) continue
+                val match = TOKEN_PATTERN.find(lines[i])
+                if (match != null) {
+                    result["token"] = match.value
+                    consumed.add(i)
                     break
                 }
             }
         }
 
-        val valueLines = mutableListOf<Pair<Int, String>>()
+        // Order number: find APC/TRX + digits pattern
+        if (!result.containsKey("orderNo")) {
+            for (i in lines.indices) {
+                if (consumed.contains(i)) continue
+                val match = ORDER_NO_PATTERN.find(lines[i])
+                if (match != null) {
+                    result["orderNo"] = lines[i]
+                    consumed.add(i)
+                    break
+                }
+            }
+        }
+
+        // IDPEL: find 12-digit number
+        if (!result.containsKey("idpel")) {
+            for (i in lines.indices) {
+                if (consumed.contains(i)) continue
+                val line = lines[i].replace(" ", "")
+                if (line.matches(Regex("""^\d{12}$"""))) {
+                    result["idpel"] = line
+                    consumed.add(i)
+                    break
+                }
+            }
+        }
+
+        // Meter No: find 11-digit number (different from IDPEL)
+        if (!result.containsKey("meterNo")) {
+            for (i in lines.indices) {
+                if (consumed.contains(i)) continue
+                val line = lines[i].replace(" ", "")
+                if (line.matches(Regex("""^\d{11}$"""))) {
+                    result["meterNo"] = line
+                    consumed.add(i)
+                    break
+                }
+            }
+        }
+
+        // Tarif/Daya: find R1/XXXXXXX VA pattern
+        if (!result.containsKey("tarifDaya")) {
+            for (i in lines.indices) {
+                if (consumed.contains(i)) continue
+                val match = TARIF_DAYA_PATTERN.find(lines[i])
+                if (match != null) {
+                    result["tarifDaya"] = lines[i]
+                    consumed.add(i)
+                    break
+                }
+            }
+        }
+
+        // No. Ref: find alphanumeric reference code (10+ chars, mixed letters & digits)
+        if (!result.containsKey("noRef")) {
+            for (i in lines.indices) {
+                if (consumed.contains(i)) continue
+                val line = lines[i]
+                if (REF_NO_PATTERN.matches(line) && line.any { it.isLetter() } && line.any { it.isDigit() }) {
+                    result["noRef"] = line
+                    consumed.add(i)
+                    break
+                }
+            }
+        }
+
+        // Customer name: find ALL-CAPS name (not a known label, not consumed)
+        if (!result.containsKey("name") && !result.containsKey("customerName")) {
+            for (i in lines.indices) {
+                if (consumed.contains(i)) continue
+                val line = lines[i]
+                if (ALLCAPS_NAME_PATTERN.matches(line) && !isKnownLabelText(line)) {
+                    result["name"] = line
+                    consumed.add(i)
+                    break
+                }
+            }
+        }
+
+        // Phone number
         for (i in lines.indices) {
-            if (usedLines.contains(i)) continue
+            val match = PHONE_PATTERN.find(lines[i])
+            if (match != null) {
+                result["storePhone"] = match.groupValues[1].trim()
+                break
+            }
+        }
+    }
+
+    /**
+     * Phase 3: Find total amount separately.
+     * Total is usually the last Rp value in the receipt.
+     * Also consumes "total"/"tagihan" label lines.
+     */
+    private fun findTotalAmount(
+        lines: List<String>,
+        result: MutableMap<String, String>,
+        consumed: MutableSet<Int>
+    ) {
+        // Consume total/tagihan label lines and merge consecutive ones
+        for (i in lines.indices) {
+            if (consumed.contains(i)) continue
+            val lower = lines[i].lowercase().trim()
+            if (TOTAL_PATTERNS.any { lower == it || lower.removeSuffix(":") == it }) {
+                consumed.add(i)
+            }
+        }
+
+        // Find the last Rp amount in the text (before footer) as total
+        var lastRpLine = -1
+        var lastRpValue = ""
+        for (i in lines.indices) {
+            if (consumed.contains(i)) continue
             val line = lines[i]
-            val isKnownLabel = KNOWN_LABELS.any { labelDef ->
-                labelDef.patterns.any { pattern ->
-                    val p = pattern.removePrefix("^").removeSuffix("$")
-                    line.lowercase().trim() == p || line.lowercase().trim().removeSuffix(":") == p ||
-                        line.lowercase().contains(p)
-                }
-            }
-            if (!isKnownLabel) {
-                valueLines.add(Pair(i, line))
+            val lower = line.lowercase()
+            if (FOOTER_TRIGGERS.any { lower.contains(it) }) break
+            if (AMOUNT_PATTERN.containsMatchIn(line)) {
+                lastRpLine = i
+                lastRpValue = line
             }
         }
 
-        for ((labelIdx, labelDef) in labelOnlyLines) {
-            val bestValue = findBestValueForLabel(labelDef, labelIdx, valueLines, lines)
-            if (bestValue != null) {
-                result[labelDef.key] = bestValue.second
-                valueLines.removeAll { it.first == bestValue.first }
-            }
+        if (lastRpLine >= 0 && lastRpValue.isNotBlank()) {
+            result["total"] = lastRpValue
+            consumed.add(lastRpLine)
         }
-
-        return result
     }
 
-    private fun extractInlineValue(line: String, labelDef: LabelDef): String? {
-        for (pattern in labelDef.patterns) {
-            val p = pattern.removePrefix("^").removeSuffix("$")
-            val idx = line.lowercase().indexOf(p)
-            if (idx < 0) continue
-            val afterLabel = line.substring(idx + p.length).trimStart(':', ' ', '\t')
-            if (afterLabel.isNotBlank()) return afterLabel
+    /**
+     * Phase 4: Match remaining amount labels to values by positional order.
+     *
+     * In two-column OCR, amount labels appear in one block and their
+     * corresponding Rp values appear later in the same order.
+     */
+    private fun matchAmountsPositionally(
+        lines: List<String>,
+        result: MutableMap<String, String>,
+        consumed: MutableSet<Int>
+    ) {
+        // Find amount label lines in order they appear
+        val assignedKeys = mutableSetOf<String>()
+        val amountLabelOrder = mutableListOf<Pair<Int, String>>()
+        for (i in lines.indices) {
+            if (consumed.contains(i)) continue
+            val lower = lines[i].lowercase().trim()
+            for ((key, patterns) in AMOUNT_LABELS) {
+                if (result.containsKey(key) || assignedKeys.contains(key)) continue
+                val isMatch = patterns.any { p -> lower == p || lower.removeSuffix(":") == p }
+                if (isMatch) {
+                    amountLabelOrder.add(Pair(i, key))
+                    assignedKeys.add(key)
+                    consumed.add(i)
+                    break
+                }
+            }
         }
-        return null
+
+        // Find amount value lines (Rp X.XXX or bare "X,XX" with 2 decimals)
+        val amountValues = mutableListOf<Pair<Int, String>>()
+        for (i in lines.indices) {
+            if (consumed.contains(i)) continue
+            val line = lines[i]
+            if (AMOUNT_PATTERN.containsMatchIn(line) || BARE_AMOUNT_PATTERN.matches(line)) {
+                amountValues.add(Pair(i, line))
+            }
+        }
+
+        // Pair by positional index
+        for (idx in amountLabelOrder.indices) {
+            if (idx >= amountValues.size) break
+            val (_, key) = amountLabelOrder[idx]
+            val (valueLineIdx, valueLine) = amountValues[idx]
+            result[key] = valueLine
+            consumed.add(valueLineIdx)
+        }
     }
 
-    private fun findBestValueForLabel(
-        labelDef: LabelDef,
-        labelIdx: Int,
-        valueLines: List<Pair<Int, String>>,
-        allLines: List<String>
-    ): Pair<Int, String>? {
-        val candidates = valueLines.filter { it.first > labelIdx }
-        if (candidates.isEmpty()) return null
-
-        when (labelDef.valueType) {
-            ValueType.DATE -> {
-                for (c in candidates) {
-                    if (DATE_TIME_PATTERN.containsMatchIn(c.second) || DATE_PATTERN.containsMatchIn(c.second)) {
-                        val dt = DATE_TIME_PATTERN.find(c.second)?.value
-                            ?: run {
-                                val d = DATE_PATTERN.find(c.second)?.value ?: ""
-                                val t = TIME_PATTERN.find(c.second)?.value ?: ""
-                                "$d $t".trim()
-                            }
-                        return Pair(c.first, dt)
-                    }
-                }
-            }
-            ValueType.AMOUNT -> {
-                for (c in candidates) {
-                    if (AMOUNT_PATTERN.containsMatchIn(c.second) ||
-                        c.second.matches(Regex("""[\d.,]+"""))) {
-                        return c
-                    }
-                }
-            }
-            ValueType.TOKEN -> {
-                for (c in candidates) {
-                    if (TOKEN_PATTERN.containsMatchIn(c.second)) {
-                        return Pair(c.first, TOKEN_PATTERN.find(c.second)!!.value)
-                    }
-                    if (c.second.length >= 10 && c.second.all { it.isLetterOrDigit() }) {
-                        return c
-                    }
-                }
-            }
-            ValueType.TEXT -> {
-                return candidates.firstOrNull()
+    /**
+     * Phase 5: Find kWh value after amounts are consumed.
+     * kWh values have 1 decimal place (like "30,8") vs amounts with 2 ("0,00").
+     */
+    private fun findKwh(
+        lines: List<String>,
+        result: MutableMap<String, String>,
+        consumed: MutableSet<Int>
+    ) {
+        if (result.containsKey("jumlahKwh")) return
+        for (i in lines.indices) {
+            if (consumed.contains(i)) continue
+            val line = lines[i]
+            if (KWH_PATTERN.matches(line)) {
+                result["jumlahKwh"] = line
+                consumed.add(i)
+                break
             }
         }
+    }
 
-        return candidates.firstOrNull()
+    private fun isKnownLabelText(text: String): Boolean {
+        val lower = text.lowercase().trim()
+        for ((_, patterns) in LABEL_PATTERNS) {
+            if (patterns.any { lower == it || lower.removeSuffix(":") == it }) return true
+        }
+        for ((_, patterns) in AMOUNT_LABELS) {
+            if (patterns.any { lower == it || lower.removeSuffix(":") == it }) return true
+        }
+        return false
     }
 
     private fun extractAddressFromHeader(lines: List<String>): String {
-        for (line in lines) {
-            val lower = line.lowercase()
-            if (lower.startsWith("alamat") || lower.contains("alamat mitra") || lower.contains("alamat toko")) {
-                val afterLabel = line.substringAfter(":").trim()
+        for (i in lines.indices) {
+            val lower = lines[i].lowercase()
+            if (lower.contains("alamat mitra") || lower.contains("alamat toko") || lower.startsWith("alamat")) {
+                val afterLabel = lines[i].substringAfter(":").trim()
                 if (afterLabel.isNotBlank()) {
-                    val idx = lines.indexOf(line)
                     val addressParts = mutableListOf(afterLabel)
-                    if (idx + 1 < lines.size) {
-                        val nextLine = lines[idx + 1]
-                        val nextLower = nextLine.lowercase()
-                        if (!isLabelLine(nextLower) && !AMOUNT_PATTERN.containsMatchIn(nextLine)) {
+                    if (i + 1 < lines.size) {
+                        val nextLine = lines[i + 1]
+                        if (!isKnownLabelText(nextLine) && !AMOUNT_PATTERN.containsMatchIn(nextLine) &&
+                            !nextLine.lowercase().contains("struk") && !nextLine.lowercase().contains("pembayaran")) {
                             addressParts.add(nextLine)
                         }
                     }
@@ -313,54 +525,25 @@ object ReceiptParser {
         return ""
     }
 
-    private fun isLabelLine(lower: String): Boolean {
-        return KNOWN_LABELS.any { labelDef ->
-            labelDef.patterns.any { pattern ->
-                val p = pattern.removePrefix("^").removeSuffix("$")
-                lower.trim() == p || lower.trim().removeSuffix(":") == p
-            }
-        }
-    }
-
     private fun detectReceiptTitle(lines: List<String>): String {
+        val titleParts = mutableListOf<String>()
         for (line in lines.take(10)) {
             val lower = line.lowercase()
             if (lower.contains("struk pembayaran") || lower.contains("bukti pembayaran") ||
+                lower.contains("tagihan listrik") || lower.contains("pln") ||
                 lower.contains("receipt") || lower.contains("invoice")) {
-                return line
+                titleParts.add(line)
             }
         }
-        return ""
-    }
-
-    private fun findDateTime(lines: List<String>): String {
-        for (line in lines) {
-            val dtMatch = DATE_TIME_PATTERN.find(line)
-            if (dtMatch != null) return dtMatch.value
-        }
-        for (line in lines) {
-            val dateMatch = DATE_PATTERN.find(line)
-            if (dateMatch != null) {
-                val timeMatch = TIME_PATTERN.find(line)
-                val time = timeMatch?.value ?: ""
-                return "${dateMatch.value} $time".trim()
-            }
-        }
-        return ""
-    }
-
-    private fun findToken(lines: List<String>): String {
-        for (line in lines) {
-            val match = TOKEN_PATTERN.find(line)
-            if (match != null) return match.value
-        }
-        return ""
+        return titleParts.joinToString(" ").trim()
     }
 
     private fun detectPaymentMethod(lines: List<String>): String {
         for (line in lines) {
             val lower = line.lowercase()
             when {
+                lower.contains("mitra shopee") || lower.contains("milra shopee") ||
+                    lower.contains("et mitra") || lower.contains("et milra") -> return "Mitra Shopee"
                 lower.contains("shopee") -> return "Mitra Shopee"
                 lower.contains("tunai") || lower.contains("cash") -> return "Tunai"
                 lower.contains("qris") -> return "QRIS"
@@ -378,21 +561,17 @@ object ReceiptParser {
         val items = mutableListOf<ParsedReceiptItem>()
         var inItemSection = false
         var i = 0
-
         while (i < lines.size) {
             val line = lines[i]
             if (line.matches(Regex("^[-=]{3,}$"))) {
                 inItemSection = !inItemSection
-                i++
-                continue
-            }
-            if (!inItemSection) { i++; continue }
-
-            val lower = line.lowercase()
-            if (isLabelLine(lower) || lower.contains("total") || lower.contains("subtotal")) {
                 i++; continue
             }
-
+            if (!inItemSection) { i++; continue }
+            val lower = line.lowercase()
+            if (isKnownLabelText(line) || lower.contains("total") || lower.contains("subtotal")) {
+                i++; continue
+            }
             val qtyMatch = QTY_PRICE_PATTERN.find(line)
             if (qtyMatch != null) {
                 val qty = qtyMatch.groupValues[1].toIntOrNull() ?: 1
@@ -402,12 +581,10 @@ object ReceiptParser {
                 if (namePart.isNotBlank()) {
                     items.add(ParsedReceiptItem(name = namePart, quantity = qty, price = price, subtotal = sub))
                 } else if (items.isNotEmpty()) {
-                    val last = items.last()
-                    items[items.lastIndex] = last.copy(quantity = qty, price = price, subtotal = sub)
+                    items[items.lastIndex] = items.last().copy(quantity = qty, price = price, subtotal = sub)
                 }
                 i++; continue
             }
-
             val priceMatch = AMOUNT_PATTERN.find(line)
             if (priceMatch != null) {
                 val priceVal = parseNumber(priceMatch.value)
@@ -417,33 +594,30 @@ object ReceiptParser {
                 }
                 i++; continue
             }
-
             i++
         }
         return items
     }
 
     private fun extractFooterText(lines: List<String>): String {
-        val footerPatterns = listOf("informasi", "hubungi", "call center", "simpan struk",
-            "terima kasih", "thank", "bukti pembayaran", "hub pln")
         val footerLines = mutableListOf<String>()
         var inFooter = false
         for (line in lines) {
             val lower = line.lowercase()
-            if (!inFooter && footerPatterns.any { lower.contains(it) }) {
+            if (!inFooter && FOOTER_TRIGGERS.any { lower.contains(it) }) {
                 inFooter = true
             }
-            if (inFooter) {
-                footerLines.add(line)
-            }
+            if (inFooter) footerLines.add(line)
         }
         return footerLines.joinToString("\n")
     }
 
     private fun parseAmountStr(text: String?): Double {
         if (text.isNullOrBlank()) return 0.0
-        val match = AMOUNT_PATTERN.find(text) ?: NUMBER_PATTERN.find(text) ?: return 0.0
-        return parseNumber(match.value)
+        val match = AMOUNT_PATTERN.find(text)
+        if (match != null) return parseNumber(match.value)
+        val numMatch = Regex("""[\d.,]+""").find(text) ?: return 0.0
+        return parseNumber(numMatch.value)
     }
 
     private fun parseNumber(text: String): Double {
