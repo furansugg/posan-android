@@ -4,14 +4,14 @@ import com.posan.app.util.Format
 
 object ReceiptFormatter {
 
-    fun format(receipt: ParsedReceipt, width: Int = 32): String {
+    fun format(receipt: ParsedReceipt, width: Int = 40): String {
         val sb = StringBuilder()
 
         if (receipt.storeName.isNotBlank()) {
-            sb.appendLine(center(receipt.storeName, width))
+            sb.appendLine(center(receipt.storeName.uppercase(), width))
         }
         if (receipt.storeAddress.isNotBlank()) {
-            receipt.storeAddress.split(",").map { it.trim() }.filter { it.isNotBlank() }.forEach {
+            wrapText(receipt.storeAddress, width).forEach {
                 sb.appendLine(center(it, width))
             }
         }
@@ -19,19 +19,35 @@ object ReceiptFormatter {
             sb.appendLine(center("Telp: ${receipt.storePhone}", width))
         }
 
+        if (receipt.receiptTitle.isNotBlank()) {
+            sb.appendLine("=".repeat(width))
+            sb.appendLine(center(receipt.receiptTitle, width))
+        }
+
         sb.appendLine("=".repeat(width))
 
         if (receipt.transactionCode.isNotBlank()) {
-            sb.appendLine("No  : ${receipt.transactionCode}")
+            sb.appendLine(twoColumn("No. Pesanan", receipt.transactionCode, width))
         }
         if (receipt.dateTime.isNotBlank()) {
-            sb.appendLine("Tgl : ${receipt.dateTime}")
+            sb.appendLine(twoColumn("Tanggal", receipt.dateTime, width))
         }
         if (receipt.cashier.isNotBlank()) {
-            sb.appendLine("Kasir: ${receipt.cashier}")
+            sb.appendLine(twoColumn("Kasir", receipt.cashier, width))
         }
         if (receipt.customer.isNotBlank()) {
-            sb.appendLine("Plg  : ${receipt.customer}")
+            sb.appendLine(twoColumn("Pelanggan", receipt.customer, width))
+        }
+
+        val extra = receipt.extraFields
+        val infoKeys = listOf("IDPEL", "Meter No", "Tarif/Daya", "No. Ref", "Token", "Jumlah kWh")
+        val hasInfoFields = infoKeys.any { extra.containsKey(it) }
+        if (hasInfoFields) {
+            sb.appendLine("-".repeat(width))
+            for (key in infoKeys) {
+                val value = extra[key] ?: continue
+                sb.appendLine(twoColumn(key, value, width))
+            }
         }
 
         sb.appendLine("-".repeat(width))
@@ -50,6 +66,12 @@ object ReceiptFormatter {
             sb.appendLine("-".repeat(width))
         }
 
+        val feeKeys = listOf("Admin", "PPN", "PPJ", "Meterai", "Angsuran")
+        for (key in feeKeys) {
+            val value = extra[key] ?: continue
+            sb.appendLine(twoColumn(key, value, width))
+        }
+
         if (receipt.subtotal > 0) {
             sb.appendLine(twoColumn("Subtotal", formatNumber(receipt.subtotal), width))
         }
@@ -65,8 +87,12 @@ object ReceiptFormatter {
         if (receipt.total > 0) {
             sb.appendLine(twoColumn("TOTAL", "Rp ${formatNumber(receipt.total)}", width))
         }
-        if (receipt.paymentMethod.isNotBlank() && receipt.paymentReceived > 0) {
-            sb.appendLine(twoColumn("Bayar (${receipt.paymentMethod})", formatNumber(receipt.paymentReceived), width))
+        if (receipt.paymentMethod.isNotBlank()) {
+            if (receipt.paymentReceived > 0) {
+                sb.appendLine(twoColumn("Bayar (${receipt.paymentMethod})", formatNumber(receipt.paymentReceived), width))
+            } else {
+                sb.appendLine(twoColumn("Pembayaran", receipt.paymentMethod, width))
+            }
         }
         if (receipt.change > 0) {
             sb.appendLine(twoColumn("Kembali", formatNumber(receipt.change), width))
@@ -101,5 +127,23 @@ object ReceiptFormatter {
         val l = if (left.length > maxLeft) left.take(maxLeft) else left
         val pad = (width - l.length - right.length).coerceAtLeast(1)
         return l + " ".repeat(pad) + right
+    }
+
+    private fun wrapText(text: String, width: Int): List<String> {
+        if (text.length <= width) return listOf(text)
+        val parts = text.split(",", " ").filter { it.isNotBlank() }
+        val lines = mutableListOf<String>()
+        var current = ""
+        for (part in parts) {
+            val candidate = if (current.isEmpty()) part else "$current $part"
+            if (candidate.length > width && current.isNotEmpty()) {
+                lines.add(current)
+                current = part
+            } else {
+                current = candidate
+            }
+        }
+        if (current.isNotBlank()) lines.add(current)
+        return lines
     }
 }
