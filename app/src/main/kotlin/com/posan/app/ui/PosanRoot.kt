@@ -30,6 +30,7 @@ import com.posan.app.ui.report.ReportScreen
 import com.posan.app.ui.stock.StockScreen
 import com.posan.app.ui.transactions.TransactionDetailScreen
 import com.posan.app.ui.transactions.TransactionsScreen
+import com.posan.app.ui.textrecognition.TextRecognitionScreen
 import com.posan.app.ui.users.UsersScreen
 
 object Routes {
@@ -50,6 +51,7 @@ object Routes {
     const val BACKUP = "backup"
     const val PLN_TOKEN = "pln_token"
     const val PLN_TEMPLATES = "pln_templates"
+    const val TEXT_RECOGNITION = "text_recognition"
 }
 
 @Composable
@@ -152,6 +154,9 @@ fun PosanRoot() {
         }
         composable(Routes.PLN_TEMPLATES) {
             PlnTokenTemplatesScreen(onBack = { navController.popBackStack() })
+        }
+        composable(Routes.TEXT_RECOGNITION) {
+            TextRecognitionScreen(onBack = { navController.popBackStack() })
         }
     }
 }

@@ -30,6 +30,7 @@ import androidx.compose.material.icons.filled.Print
 import androidx.compose.material.icons.filled.Receipt
 import androidx.compose.material.icons.filled.ReceiptLong
 import androidx.compose.material.icons.filled.ShoppingBag
+import androidx.compose.material.icons.filled.TextFields
 import androidx.compose.material.icons.filled.TrendingUp
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Card
@@ -373,5 +374,6 @@ private val MENU_ITEMS = listOf(
     MenuItem("Template PLN", Icons.Default.Bolt, Routes.PLN_TEMPLATES, CatPurple),
     MenuItem("Cetak", Icons.Default.Print, Routes.PRINT_SETTINGS, CatRed),
     MenuItem("Backup", Icons.Default.Backup, Routes.BACKUP, CatCyan),
-    MenuItem("Printer", Icons.Default.Print, Routes.PRINTER_DEVICES, CatBlue)
+    MenuItem("Printer", Icons.Default.Print, Routes.PRINTER_DEVICES, CatBlue),
+    MenuItem("Ekstrak Teks", Icons.Default.TextFields, Routes.TEXT_RECOGNITION, CatCyan)
 )
