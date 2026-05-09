@@ -1,5 +1,6 @@
 package com.posan.app.ui.textrecognition
 
+import android.Manifest
 import android.graphics.BitmapFactory
 import android.graphics.ImageDecoder
 import android.os.Build
@@ -94,6 +95,18 @@ fun TextRecognitionScreen(
         }
     }
 
+    val cameraPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) {
+            cameraLauncher.launch(photoUri)
+        }
+    }
+
+    val launchCamera: () -> Unit = {
+        cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
+    }
+
     Scaffold(
         topBar = {
             SimpleAppBar(
@@ -114,7 +127,7 @@ fun TextRecognitionScreen(
             if (!state.hasResult && !state.isProcessing) {
                 EmptyOcrPrompt(
                     onPickGallery = { galleryLauncher.launch("image/*") },
-                    onTakePhoto = { cameraLauncher.launch(photoUri) }
+                    onTakePhoto = launchCamera
                 )
             }
 
@@ -208,7 +221,7 @@ fun TextRecognitionScreen(
                         Text("Galeri")
                     }
                     OutlinedButton(
-                        onClick = { cameraLauncher.launch(photoUri) },
+                        onClick = launchCamera,
                         modifier = Modifier.weight(1f)
                     ) {
                         Icon(

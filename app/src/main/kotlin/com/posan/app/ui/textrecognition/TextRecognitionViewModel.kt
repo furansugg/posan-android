@@ -41,6 +41,7 @@ class TextRecognitionViewModel @Inject constructor() : ViewModel() {
             .addOnFailureListener { e ->
                 _state.value = _state.value.copy(
                     isProcessing = false,
+                    hasResult = true,
                     error = "Gagal mengenali teks: ${e.localizedMessage}"
                 )
             }
